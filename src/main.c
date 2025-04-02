@@ -182,7 +182,7 @@ tt lex(lexer l, tok *t) {
         case '/': {
             if (lex_eat(l, '/')) {
                 lex_skip_line(l);
-                return lex(l, t);
+                tail return lex(l, t);
             }
             return lex_eat(l, '=') ? tt_slash_eq : tt_slash;
         }

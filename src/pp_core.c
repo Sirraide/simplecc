@@ -129,7 +129,7 @@ tok *pp_look_ahead(pp pp, size_t n) {
     }
 
     pp->tok = tok_move(&saved);
-    return pp_look_ahead(pp, n);
+    tail return pp_look_ahead(pp, n);
 }
 
 bool pp_ts_done(token_stream s) {
@@ -167,11 +167,11 @@ void pp_preprocess(pp pp) {
             pp_error(pp, "expected preprocessor directive");
 
         pp_dir(pp);
-        return pp_preprocess(pp);
+        tail return pp_preprocess(pp);
     }
 
     if (pp->tok.type == tt_pp_name && pp_maybe_expand_macro(pp))
-        return pp_preprocess(pp);
+        tail return pp_preprocess(pp);
 
     // TODO: Concatenate adjacent string literal tokens here.
 }
@@ -208,7 +208,7 @@ void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
     }
 
     if (pp->tok.type == tt_eof)
-        pp_read_token_raw_impl(pp, include_look_ahead);
+        tail return pp_read_token_raw_impl(pp, include_look_ahead);
 }
 
 void pp_read_token(pp pp) {
