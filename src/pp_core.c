@@ -131,7 +131,6 @@ tok *pp_look_ahead(pp pp, size_t n) {
     return pp_look_ahead(pp, n);
 }
 
-
 bool pp_ts_done(token_stream s) {
     switch (s->kind) {
         case ts_lexer: return lex_eof(&s->lex);
@@ -177,6 +176,8 @@ void pp_preprocess(pp pp) {
 }
 
 void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
+    memset(&pp->tok, 0, sizeof(tok));
+
     if (include_look_ahead && pp->look_ahead_tokens.size) {
         tok_move_into(&pp->tok, &vec_front(pp->look_ahead_tokens));
         vec_pop_front(pp->look_ahead_tokens);
@@ -224,7 +225,8 @@ void pp_read_token_raw(pp pp) {
 
     if (pp->tok.type == tt_pp_name) {
         auto m = vec_find_if(p, pp->defs, eq(p->name, pp->tok.name));
-        if (m && m->expanding) pp->tok.disable_expansion = true;
+        if (m && m->expanding)
+            pp->tok.disable_expansion = true;
     }
 }
 
