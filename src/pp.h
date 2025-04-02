@@ -39,7 +39,7 @@ noreturn pp_error_at(loc l, const char *err);
 void pp_add_lexer(pp pp, const char *filename);
 void pp_dir(pp pp);
 void pp_do_define(pp pp);
-void pp_enter_token_stream(pp pp, tokens *toks, macro m);
+void pp_enter_token_stream(pp pp, tokens toks, macro m);
 void pp_free(pp pp);
 bool pp_lexing_file(pp pp);
 tok *pp_look_ahead(pp pp, size_t n);

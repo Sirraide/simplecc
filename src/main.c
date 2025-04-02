@@ -291,6 +291,19 @@ tok tok_move(tok *t) {
     return moved;
 }
 
+void tok_reset(tok *a) {
+    a->type = tt_invalid;
+    a->start_of_line = false;
+    a->disable_expansion = false;
+    a->whitespace_before = false;
+    vec_clear(a->name);
+    a->val = 0;
+}
+
+void tokens_free(tokens *toks) {
+    vec_delete_els(t, *toks) vec_free(t->name);
+}
+
 void tok_move_into(tok *a, tok *b) {
     tok_free(a);
     *a = tok_move(b);

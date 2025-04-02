@@ -289,7 +289,12 @@ static tokens *pp_substitute(pp_expansion exp, size_t param_index) {
     // p4: 'The argument’s preprocessing tokens are completely macro replaced before
     // being substituted as if they formed the rest of the preprocessing file with no
     // other preprocessing tokens being available.'
-    pp_enter_token_stream(pp, arg_toks, nullptr);
+    {
+        tokens copy = {};
+        vec_for(t, *arg_toks) vec_push(copy, tok_copy(t));
+        pp_enter_token_stream(pp, copy, nullptr);
+    }
+
     vec_back(pp->token_streams).toks.keep_when_empty = true;
     for (;;) {
         pp_read_and_expand_token(pp);
@@ -425,6 +430,7 @@ static void pp_paste(pp_expansion exp, const tok *t) {
     l.c = ' ';
     tok tmp = {};
     tmp.type = lex(&l, &tmp);
+    vec_free(concat);
 
     if (!lex_eof(&l)) pp_error_at(exp->l, "token pasting did not produce a valid pp-token");
     tmp.loc = before->loc;
@@ -743,13 +749,10 @@ static void pp_fini_expansion(pp_expansion exp, bool start_of_line, bool ws_befo
         auto first = &vec_front(exp->expansion);
         first->start_of_line = start_of_line;
         first->whitespace_before = ws_before;
-        pp_enter_token_stream(exp->pp, &exp->expansion, exp->m);
+        pp_enter_token_stream(exp->pp, exp->expansion, exp->m);
     }
 
-    vec_delete_els(t, exp->expansion) tok_free(t);
-    vec_delete_els(arg, exp->expanded_args)
-        vec_delete_els(t, *arg)
-            tok_free(t);
+    vec_delete_els(arg, exp->expanded_args) tokens_free(arg);
 }
 
 static void pp_expand_function_like(
@@ -829,8 +832,13 @@ bool pp_maybe_expand_macro(pp pp) {
     macro m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.name));
 
     if (m && !m->expanding) {
-        if (m->is_function_like) pp_expand_function_like(pp, m, &args, l, sol, ws_before);
-        else pp_expand_object_like(pp, m, l, sol, ws_before);
+        if (m->is_function_like) {
+            pp_expand_function_like(pp, m, &args, l, sol, ws_before);
+            vec_for(arg, args) tokens_free(arg);
+        } else {
+            pp_expand_object_like(pp, m, l, sol, ws_before);
+        }
+
         pp_read_token_raw(pp);
         return true;
     }

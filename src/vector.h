@@ -40,6 +40,7 @@
     ({                                                                            \
         typeof_unqual(vector) _copy = (vector);                                   \
         _copy.data = malloc(_copy.size * sizeof *(vector).data);                  \
+        _copy.capacity = _copy.size;                                              \
         memcpy(_copy.data, (vector).data, (vector).size * sizeof *(vector).data); \
         _copy;                                                                    \
     })

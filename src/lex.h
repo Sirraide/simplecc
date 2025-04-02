@@ -167,5 +167,7 @@ tok tok_copy(const tok *t);
 void tok_free(tok *t);
 tok tok_move(tok *t);
 void tok_move_into(tok *a, tok *b);
+void tok_reset(tok* t);
+void tokens_free(tokens* toks);
 
 #endif // LEX_H

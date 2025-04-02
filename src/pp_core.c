@@ -79,23 +79,20 @@ noreturn pp_error(pp pp, const char *msg) {
     exit(1);
 }
 
-
 void pp_error_at(loc l, const char *err) {
     print_loc(l);
     printf("error: %s\n", err);
     exit(1);
 }
 
-void pp_enter_token_stream(pp pp, tokens *toks, macro m) { // clang-format off
+void pp_enter_token_stream(pp pp, tokens toks, macro m) { // clang-format off
     if (m) m->expanding = true;
     pp_materialise_look_ahead_toks(pp);
-    tokens copy = {};
-    vec_for(t, *toks) vec_push(copy, tok_copy(t));
     vec_push(pp->token_streams, (struct token_stream) {
         .kind = ts_toks,
         .toks = {
             .m = m,
-            .toks = copy,
+            .toks = toks,
             .cursor = 0,
             .keep_when_empty = false,
         },
@@ -104,8 +101,8 @@ void pp_enter_token_stream(pp pp, tokens *toks, macro m) { // clang-format off
 
 void pp_free_macro(macro m) {
     vec_free(m->name);
-    vec_delete_els(t, m->tokens)
-        vec_free(t->name);
+    vec_delete_els(p, m->params) vec_free(*p);
+    tokens_free(&m->tokens);
 }
 
 void pp_free(pp pp) {
@@ -114,6 +111,10 @@ void pp_free(pp pp) {
 
     vec_delete_els(f, pp->filenames)
         vec_free(*f);
+
+    tok_free(&pp->tok);
+    tokens_free(&pp->look_ahead_tokens);
+    vec_free(pp->token_streams);
 }
 
 tok *pp_look_ahead(pp pp, size_t n) {
@@ -145,12 +146,12 @@ void pp_ts_pop(pp pp) {
     switch (ts.kind) {
         case ts_lexer:
             if (ts.lex.pp_if_depth) pp_error_at(ts.lex.loc, "missing #endif at end of file");
-        free(ts.lex.data);
-        return;
+            free(ts.lex.data);
+            return;
         case ts_toks:
-            vec_free(ts.toks.toks);
-        if (ts.toks.m) ts.toks.m->expanding = false;
-        return;
+            tokens_free(&ts.toks.toks);
+            if (ts.toks.m) ts.toks.m->expanding = false;
+            return;
     }
 
     die("unreachable");
@@ -176,7 +177,7 @@ void pp_preprocess(pp pp) {
 }
 
 void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
-    memset(&pp->tok, 0, sizeof(tok));
+    tok_reset(&pp->tok);
 
     if (include_look_ahead && pp->look_ahead_tokens.size) {
         tok_move_into(&pp->tok, &vec_front(pp->look_ahead_tokens));

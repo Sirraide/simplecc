@@ -7,6 +7,7 @@ file(GLOB_RECURSE sources src/*.c)
 file(GLOB_RECURSE headers src/*.h)
 add_executable(simplecc ${sources})
 target_sources(simplecc PRIVATE FILE_SET HEADERS FILES ${headers})
+set_target_properties(simplecc PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR})
 target_compile_options(simplecc PRIVATE
 	-Wall
 	-Wextra
@@ -16,4 +17,7 @@ target_compile_options(simplecc PRIVATE
 	-Wshadow
 )
 
-set_target_properties(simplecc PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR})
+if (ENABLE_ASAN)
+	target_compile_options(simplecc PRIVATE -fsanitize=undefined,address)
+	target_link_options(simplecc PRIVATE -fsanitize=undefined,address)
+endif()
