@@ -10,6 +10,7 @@ typedef struct pp_va_opt {
     bool stringise_whitespace_before;
     bool paste_tokens;
     bool ends_with_placemarker;
+    bool did_paste;
 } pp_va_opt;
 
 typedef struct pp_expansion {
@@ -21,6 +22,7 @@ typedef struct pp_expansion {
     tokens expansion;         ///< The resulting expansion of this macro.
     macro m;                  ///< The macro being expanded.
     loc l;                    ///< Expansion location.
+    bool insert_whitespace;   ///< Whether the next token gets whitespace inserted before it.
 } *pp_expansion;
 
 // ====================================================================
@@ -158,6 +160,9 @@ void pp_do_define(pp pp) {
         else if (t->type == tt_pp_va_opt) t->val = pp_find_va_opt_rparen(pp, &m, &cursor);
     }
 
+    // The space before the first token in the replacement list doesn’t count.
+    if (m.tokens.size) vec_front(m.tokens).whitespace_before = false;
+
     pp_undefine(pp, as_span(m.name));
     vec_push(pp->defs, m);
 }
@@ -192,7 +197,10 @@ static macro pp_get_expandable_macro(pp pp, span name) {
 static void pp_get_macro_args(pp pp, macro m, tokens_vec *args) {
     // C23 6.10.5p11: 'The sequence of preprocessing tokens bounded by the outside-most
     // matching parentheses forms the list of arguments for the function-like macro.'
-    if (pp->tok.type != tt_rparen) {
+    if (pp->tok.type == tt_rparen) {
+        // Always push at least one argument list if the macro has parameters.
+        if (m->params.size) vec_push(*args, (tokens) {});
+    } else {
         size_t parens = 1;
         vec_push(*args, (tokens) {});
         while (pp->tok.type != tt_eof && parens) {
@@ -248,6 +256,10 @@ static macro pp_get_macro_and_args(pp pp, tokens_vec *args, span name) {
     return m;
 }
 
+static bool pp_in_va_opt(pp_expansion exp) {
+    return exp->va_opt.index != NO_INDEX;
+}
+
 /// This implements C2y 6.10.5.2 'Argument substitution'.
 ///
 /// This only handles the case of there not being any preceding #
@@ -285,9 +297,6 @@ static tokens *pp_substitute(pp_expansion exp, size_t param_index) {
         vec_push(*expanded_arg, tok_move(&pp->tok));
     }
     pp_ts_pop(pp);
-
-    // Insert a space before the first token.
-    if (expanded_arg->size) vec_front(*expanded_arg).whitespace_before = true;
     return expanded_arg;
 }
 
@@ -422,6 +431,9 @@ static void pp_paste(pp_expansion exp, const tok *t) {
     tmp.whitespace_before = before->whitespace_before;
     tmp.start_of_line = before->start_of_line;
     tok_move_into(before, &tmp);
+
+    if (pp_in_va_opt(exp)) exp->va_opt.did_paste = true;
+    exp->insert_whitespace = false;
 }
 
 static tok pp_stringise(pp_expansion exp, const tok *t) {
@@ -464,10 +476,6 @@ static void pp_enter_va_opt(pp_expansion exp, const tok *va_opt_token) {
     }
 }
 
-static bool pp_in_va_opt(pp_expansion exp) {
-    return exp->va_opt.index != NO_INDEX;
-}
-
 static void pp_placemarker(pp_expansion exp) {
     // ‘Insert’ a ‘placemarker token’, i.e. consume any '##' that
     // follows or record that we need to consume a '##' if we’re at
@@ -483,6 +491,25 @@ static void pp_placemarker(pp_expansion exp) {
 static void pp_va_opt_reset(pp_expansion exp) {
     memset(&exp->va_opt, 0, sizeof(exp->va_opt));
     exp->va_opt.index = NO_INDEX;
+}
+
+static void pp_append(pp_expansion exp, tok t) {
+    if (exp->insert_whitespace) {
+        exp->insert_whitespace = false;
+        t.whitespace_before = true;
+    }
+
+    vec_push(exp->expansion, t);
+}
+
+static void pp_append_toks(pp_expansion exp, const tokens* toks, const tok* expanded_from) {
+    // If the tokens are empty, insert a placemarker. This is important if the
+    // next token is '##'; if we’re inserting fully expanded tokens, then this
+    // is actually only relevant in an edge case, namely if this parameter is
+    // the A in '__VA_OPT__(...A)##B'.
+    if (expanded_from->whitespace_before) exp->insert_whitespace = true;
+    if (toks->size == 0) pp_placemarker(exp);
+    else { vec_for(p, *toks) pp_append(exp, tok_copy(p)); }
 }
 
 static void pp_expand_function_like_impl(pp_expansion exp) {
@@ -570,13 +597,16 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
                     pp_paste(exp, &s);
                     tok_free(&s);
                 } else {
-                    vec_push(exp->expansion, s);
+                    pp_append(exp, s);
                 }
             }
 
             // We have a placemarker here if the last token of '...' in '__VA_OPT__(...)' is a
             // placemarker, if '...' contains no tokens, or if we have no variadic arguments.
-            bool expands_to_nothing = exp->expansion.size == exp->va_opt.start_of_expansion;
+            //
+            // Note that if we performed token pasting within the __VA_OPT__, then it *did* in
+            // fact expand to something, even if the number of tokens hasn’t changed.
+            bool expands_to_nothing = exp->expansion.size == exp->va_opt.start_of_expansion && !exp->va_opt.did_paste;
             if (exp->va_opt.ends_with_placemarker || expands_to_nothing) pp_placemarker(exp);
             pp_va_opt_reset(exp);
             continue;
@@ -596,7 +626,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
             }
 
             exp->cursor++; // Yeet parameter.
-            vec_push(exp->expansion, pp_stringise(exp, t));
+            pp_append(exp, pp_stringise(exp, t));
             continue;
         }
 
@@ -612,7 +642,6 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
             // The next token is __VA_OPT__. If it is __VA_OPT__ is non-empty, we paste with
             // the first token in its token list.
-            t = pp_cur(exp);
             if (t->type == tt_pp_va_opt) {
                 pp_enter_va_opt(exp, t);
 
@@ -674,8 +703,11 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
             // Paste with the first token of the parameter and append any other tokens as-is.
             pp_paste(exp, &vec_front(*toks));
-            vec_for_index(i, *toks) if (i >= 1)
-                vec_push(exp->expansion, tok_copy(&toks->data[i]));
+            vec_for_index(i, *toks) {
+                if (i >= 1) {
+                    pp_append(exp, tok_copy(&toks->data[i]));
+                }
+            }
             continue;
         }
 
@@ -683,7 +715,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
         // parameter, it must be a regular, non-special token.
         if (!pp_is_param(t)) {
             exp->cursor++;
-            vec_push(exp->expansion, tok_copy(t));
+            pp_append(exp, tok_copy(t));
             continue;
         }
 
@@ -694,8 +726,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
         // case, we need to append the argument tokens as-is.
         if (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash) {
             auto param = pp_get_param_tokens(exp, t);
-            if (param->size == 0) pp_placemarker(exp);
-            else { vec_for(p, *param) vec_push(exp->expansion, tok_copy(p)); }
+            pp_append_toks(exp, param, t);
             continue;
         }
 
@@ -703,23 +734,15 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
         // in this case, the standard requires that we fully expand it before appending
         // it to the expansion (this does not happen for operands of '#' or '##').
         auto toks = pp_substitute(exp, pp_get_param_index(exp, t));
-        vec_for(p, *toks) {
-            vec_push(exp->expansion, tok_copy(p));
-            if (t->whitespace_before && p == &vec_front(*toks))
-                vec_back(exp->expansion).whitespace_before = true;
-        }
-
-        // Insert a placemarker here too (this is actually only relevant in an edge case,
-        // namely if this parameter is the A in '__VA_OPT__(...A)##B').
-        if (toks->size == 0) pp_placemarker(exp);
+        pp_append_toks(exp, toks, t);
     }
 }
 
-static void pp_fini_expansion(pp_expansion exp, bool start_of_line) {
+static void pp_fini_expansion(pp_expansion exp, bool start_of_line, bool ws_before) {
     if (exp->expansion.size) {
         auto first = &vec_front(exp->expansion);
         first->start_of_line = start_of_line;
-        first->whitespace_before = true;
+        first->whitespace_before = ws_before;
         pp_enter_token_stream(exp->pp, &exp->expansion, exp->m);
     }
 
@@ -729,7 +752,14 @@ static void pp_fini_expansion(pp_expansion exp, bool start_of_line) {
             tok_free(t);
 }
 
-static void pp_expand_function_like(pp pp, macro m, tokens_vec *args, loc l, bool start_of_line) {
+static void pp_expand_function_like(
+    pp pp,
+    macro m,
+    tokens_vec *args,
+    loc l,
+    bool start_of_line,
+    bool ws_before
+) {
 #define DIAG(...)                                                                         \
     do {                                                                                  \
         print_loc(l);                                                                     \
@@ -768,10 +798,10 @@ static void pp_expand_function_like(pp pp, macro m, tokens_vec *args, loc l, boo
     exp.args = args;
     exp.l = l;
     pp_expand_function_like_impl(&exp);
-    pp_fini_expansion(&exp, start_of_line);
+    pp_fini_expansion(&exp, start_of_line, ws_before);
 }
 
-static void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line) {
+static void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line, bool ws_before) {
     if (m->tokens.size == 0) return;
     struct pp_expansion exp = {};
     exp.pp = pp;
@@ -786,18 +816,21 @@ static void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line) {
             vec_push(exp.expansion, tok_copy(t));
         }
     }
-    pp_fini_expansion(&exp, start_of_line);
+    pp_fini_expansion(&exp, start_of_line, ws_before);
 }
 
 bool pp_maybe_expand_macro(pp pp) {
+    if (pp->tok.disable_expansion) return false;
+
     tokens_vec args = {};
     loc l = pp->tok.loc;
     bool sol = pp->tok.start_of_line;
+    bool ws_before = pp->tok.whitespace_before;
     macro m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.name));
 
     if (m && !m->expanding) {
-        if (m->is_function_like) pp_expand_function_like(pp, m, &args, l, sol);
-        else pp_expand_object_like(pp, m, l, sol);
+        if (m->is_function_like) pp_expand_function_like(pp, m, &args, l, sol, ws_before);
+        else pp_expand_object_like(pp, m, l, sol, ws_before);
         pp_read_token_raw(pp);
         return true;
     }

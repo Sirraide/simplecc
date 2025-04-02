@@ -221,6 +221,11 @@ void pp_read_and_expand_token(pp pp) {
 
 void pp_read_token_raw(pp pp) {
     pp_read_token_raw_impl(pp, true);
+
+    if (pp->tok.type == tt_pp_name) {
+        auto m = vec_find_if(p, pp->defs, eq(p->name, pp->tok.name));
+        if (m && m->expanding) pp->tok.disable_expansion = true;
+    }
 }
 
 bool pp_undefine(pp pp, span macro_name) {

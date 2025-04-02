@@ -41,7 +41,7 @@
     kw(void)               \
     kw(while)
 
-typedef enum {
+typedef enum : u8 {
     tt_invalid,
     tt_eof,
     tt_pp_name,
@@ -117,14 +117,22 @@ typedef struct loc {
 typedef struct tok {
     loc loc;
     tt type;
+
+    /// Whether this token is at the start of a line; this is relevant
+    /// for preprocessor directives.
     bool start_of_line;
+
+    /// Whether macro expansion is disabled for this token.
+    bool disable_expansion;
+
+    /// Whether there is whitespace before this token.
     bool whitespace_before;
 
-    // The contents of a string, character literal, or identifier.
+    /// The contents of a string, character literal, or identifier.
     string name;
 
-    // The value of a numeric literal; for a __VA_OPT__ token, the
-    // index of the matching closing parenthesis.
+    /// The value of a numeric literal; for a __VA_OPT__ token, the
+    /// index of the matching closing parenthesis.
     u64 val;
 } tok;
 
