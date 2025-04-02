@@ -418,6 +418,7 @@ typedef struct token_buffer {
     struct macro *m; ///< May be null.
     tokens toks;
     size_t cursor;
+    bool keep_when_empty;
 } token_buffer;
 
 typedef struct token_stream {
@@ -532,9 +533,8 @@ void lex_chars(lexer l, tok *t, bool(char_p)(char)) {
 
 void lex_number(lexer l, tok *t, bool(digit_p)(char), u8 base) {
     lex_chars(l, t, digit_p);
-    string name = t->name;
     t->val = 0;
-    vec_for_val(c, name) {
+    vec_for_val(c, t->name) {
         u64 prev = t->val;
         if (c == '\'') continue;
         if (c >= '0' && c <= '9') t->val = t->val * base + (u8) (c - '0');
@@ -619,13 +619,11 @@ tt lex(lexer l, tok *t) {
 
         case '0' ... '9': {
             vec_clear(t->name);
+            vec_push(t->name, c);
             if (c == '0') lex_number(l, t, is_octal_or_sep, 8);
             else if (lex_eat(l, 'x') || lex_eat(l, 'X')) lex_number(l, t, is_hex_or_sep, 16);
             else if (lex_eat(l, 'b') || lex_eat(l, 'B')) lex_number(l, t, is_bin_or_sep, 2);
-            else {
-                vec_push(t->name, c);
-                lex_number(l, t, is_decimal_or_sep, 10);
-            }
+            else lex_number(l, t, is_decimal_or_sep, 10);
             return tt_int_lit;
         }
 
@@ -756,7 +754,6 @@ typedef struct pp {
     vec(struct token_stream) token_streams;
     vec(struct macro) defs;
     strings filenames;
-    bool retain_empty_streams;
 } *pp;
 
 void pp_conv(pp pp);
@@ -979,6 +976,9 @@ void pp_dir_undef(pp pp) {
         print_loc(pp->tok.loc);
         printf("warning: macro '%.*s' is not defined\n", (int) pp->tok.name.size, pp->tok.name.data);
     }
+
+    do pp_read_token_raw(pp);
+    while (!pp->tok.start_of_line);
 }
 
 noreturn pp_error(pp pp, const char *msg) {
@@ -1034,14 +1034,13 @@ nodiscard tokens *pp_substitute(pp_expansion exp, size_t param_index) {
     // p4: 'The argument’s preprocessing tokens are completely macro replaced before
     // being substituted as if they formed the rest of the preprocessing file with no
     // other preprocessing tokens being available.'
-    pp_materialise_look_ahead_toks(pp);
     pp_enter_token_stream(pp, arg_toks, nullptr);
-    pp->retain_empty_streams = true;
-    while (!pp_ts_done(&vec_back(pp->token_streams))) {
+    vec_back(pp->token_streams).toks.keep_when_empty = true;
+    for (;;) {
         pp_read_and_expand_token(pp);
+        if (pp->tok.type == tt_eof) break;
         vec_push(*expanded_arg, tok_move(&pp->tok));
     }
-    pp->retain_empty_streams = false;
     pp_ts_pop(pp);
 
     // Insert a space before the first token.
@@ -1094,6 +1093,7 @@ void pp_enter_token_stream(pp pp, tokens *toks, macro m) { // clang-format off
             .m = m,
             .toks = copy,
             .cursor = 0,
+            .keep_when_empty = false,
         },
     });
 } // clang-format on
@@ -1257,6 +1257,7 @@ void pp_expand_function_like_impl(pp_expansion exp) {
                 continue;
             }
 
+            exp->cursor++; // Yeet parameter.
             vec_push(exp->expansion, pp_stringise(exp, t));
             continue;
         }
@@ -1489,6 +1490,7 @@ void pp_get_macro_args(pp pp, macro m, tokens_vec *args) {
                 case tt_comma:
                     if (parens == 1 && (!m->is_variadic || args->size <= m->params.size)) {
                         vec_push(*args, (tokens) {});
+                        pp_read_token_raw(pp);
                         continue;
                     }
                     break;
@@ -1612,7 +1614,9 @@ void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
     }
 
     while (pp->token_streams.size && pp_ts_done(&vec_back(pp->token_streams))) {
-        if (pp->retain_empty_streams) {
+        // This is used for macro arg substitution.
+        auto s = &vec_back(pp->token_streams);
+        if (s->kind == ts_toks && s->toks.keep_when_empty) {
             pp->tok.type = tt_eof;
             return;
         }
