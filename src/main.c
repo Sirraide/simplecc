@@ -2,7 +2,7 @@
 //  Constants
 // ====================================================================
 #define ONE_MEGABYTE (1'024 * 1'024 * 1'024)
-#define NO_INDEX    ((size_t) -1)
+#define NO_INDEX     ((size_t) -1)
 #define noreturn     __attribute__((__noreturn__)) void
 #define nodiscard    __attribute__((__warn_unused_result__))
 
@@ -77,7 +77,7 @@
 /// Create a copy of a vector. The data is copied via memcpy().
 #define vec_copy(vector)                                                          \
     ({                                                                            \
-        typeof(vector) _copy = (vector);                                          \
+        typeof_unqual(vector) _copy = (vector);                                   \
         _copy.data = malloc(_copy.size * sizeof *(vector).data);                  \
         memcpy(_copy.data, (vector).data, (vector).size * sizeof *(vector).data); \
         _copy;                                                                    \
@@ -202,7 +202,7 @@
 /// Find an element in a vector by predicate. Returns
 /// a the index of the element or -1 if not found.
 #define vec_find_if_index(element, vector, ...) ({ \
-    size_t _idx = NO_INDEX;                       \
+    size_t _idx = NO_INDEX;                        \
     vec_for_index(_i, (vector)) {                  \
         auto element = (vector).data + _i;         \
         if (__VA_ARGS__) {                         \
@@ -217,7 +217,7 @@
 /// a pointer to the element or nullptr if not found.
 #define vec_find_if(element, vector, ...) ({                        \
     size_t _idx_ = vec_find_if_index(element, vector, __VA_ARGS__); \
-    _idx_ == NO_INDEX ? nullptr : (vector).data + _idx_;           \
+    _idx_ == NO_INDEX ? nullptr : (vector).data + _idx_;            \
 })
 
 /// Remove all elements from a vector that match the condition. Additionally,
@@ -226,7 +226,7 @@
 #define vec_erase_if(element, vector, ...)                                       \
     do {                                                                         \
         size_t _first = vec_find_if_index(element, vector, __VA_ARGS__);         \
-        if (_first != NO_INDEX) {                                               \
+        if (_first != NO_INDEX) {                                                \
             for (size_t _i = _first; _i < (vector).size; _i++) {                 \
                 auto element = (vector).data + _i;                               \
                 if (!(__VA_ARGS__)) (vector).data[_first++] = (vector).data[_i]; \
@@ -414,13 +414,8 @@ typedef struct lexer {
     bool whitespace_before;
 } *lexer;
 
-typedef struct macro_expansion {
-    struct macro *m;
-    tokens toks;
-    size_t cursor;
-} macro_expansion;
-
 typedef struct token_buffer {
+    struct macro *m; ///< May be null.
     tokens toks;
     size_t cursor;
 } token_buffer;
@@ -428,13 +423,11 @@ typedef struct token_buffer {
 typedef struct token_stream {
     enum token_stream_kind {
         ts_lexer,
-        ts_macro_expansion,
         ts_toks,
     } kind;
 
     union {
         struct lexer lex;
-        macro_expansion expansion;
         token_buffer toks;
     };
 } *token_stream;
@@ -518,7 +511,7 @@ bool lex_is_continue(char c) {
 
 noreturn lex_error(lexer l, const char *msg) {
     print_loc(l->loc);
-    printf("fatal error: %s\n", msg);
+    printf("error: %s\n", msg);
     exit(1);
 }
 
@@ -747,17 +740,18 @@ typedef struct pp_va_opt {
 } pp_va_opt;
 
 typedef struct pp_expansion {
-    struct pp* pp;
+    struct pp *pp;
     pp_va_opt va_opt;
     size_t cursor;            ///< The index of the token in the replacement list we’re processing.
     tokens_vec *args;         ///< The arguments bound to each parameter + one more for __VA_ARGS__.
     tokens_vec expanded_args; ///< The fully macro-replaced arguments. One for each argument.
     tokens expansion;         ///< The resulting expansion of this macro.
-    tokens aux;               ///< Auxiliary vector used as temporary storage.
     macro m;                  ///< The macro being expanded.
+    loc l;                    ///< Expansion location.
 } *pp_expansion;
 
 typedef struct pp {
+    tok tok;
     tokens look_ahead_tokens;
     vec(struct token_stream) token_streams;
     vec(struct macro) defs;
@@ -765,19 +759,19 @@ typedef struct pp {
     bool retain_empty_streams;
 } *pp;
 
-void pp_conv(pp pp, tok *t);
+void pp_conv(pp pp);
 noreturn pp_error(pp pp, const char *msg);
 void pp_free_macro(macro m);
 macro pp_get_expandable_macro(pp pp, span name);
 macro pp_get_macro_and_args(pp pp, tokens_vec *args, span name);
 tok *pp_look_ahead(pp pp, size_t n);
-void pp_enter_token_stream(tokens *toks);
+void pp_enter_token_stream(pp pp, tokens *toks, macro m);
 void pp_materialise_look_ahead_toks(pp pp);
-void pp_preprocess(pp pp, tok *t);
-void pp_read_token(pp pp, tok *t);
-void pp_read_and_expand_token(pp pp, tok *t);
-void pp_read_token_raw(pp pp, tok *t);
-void pp_read_token_raw_impl(pp pp, tok *t, bool include_look_ahead);
+void pp_preprocess(pp pp);
+void pp_read_token(pp pp);
+void pp_read_and_expand_token(pp pp);
+void pp_read_token_raw(pp pp);
+void pp_read_token_raw_impl(pp pp, bool include_look_ahead);
 void pp_stringise_token(string *s, const tok *t, bool escape);
 tok pp_stringise_tokens(const tokens *toks, loc l, bool whitespace_before);
 bool pp_ts_done(token_stream t);
@@ -815,17 +809,20 @@ void pp_add_lexer(pp pp, const char *filename) {
     l.c = '\n'; // to set the start of line flag
 
     pp_materialise_look_ahead_toks(pp);
-    vec_push(pp->token_streams, (struct token_stream) {
-                                    .kind = ts_lexer,
-                                    .lex = l,
-                                });
+    vec_push(
+        pp->token_streams,
+        (struct token_stream) {
+            .kind = ts_lexer,
+            .lex = l,
+        }
+    );
 }
 
-void pp_conv(pp pp, tok *t) {
-    if (t->type == tt_pp_name) {
+void pp_conv(pp pp) {
+    if (pp->tok.type == tt_pp_name) {
         if (false) {}
 #define kw(x) \
-    else if (eq(t->name, lit_span(#x))) t->type = tt_kw_##x;
+    else if (eq(pp->tok.name, lit_span(#x))) pp->tok.type = tt_kw_##x;
         ALL_KEYWORDS(kw)
 #undef kw
     }
@@ -842,7 +839,7 @@ bool pp_dir_define_check_hash_impl(macro m, size_t cursor) {
 }
 
 void pp_dir_define_check_hash(pp pp, macro m, size_t cursor) {
-    if (!pp_dir_define_check_hash_impl(m, cursor))
+    if (m->is_function_like && !pp_dir_define_check_hash_impl(m, cursor))
         pp_error(pp, "expected parameter name or '__VA_OPT__' after '#'");
 }
 
@@ -853,22 +850,42 @@ void pp_dir_define_check_hash_hash(pp pp, macro m, size_t cursor) {
 
 size_t pp_find_va_opt_rparen(pp pp, macro m, size_t *cursor) {
     if (
-        m->tokens.size != *cursor ||
+        *cursor == m->tokens.size ||
         m->tokens.data[*cursor].type != tt_lparen
     ) pp_error(pp, "expected '(' after '__VA_OPT__'");
-    (*cursor)++;
+    (*cursor)++; // Yeet '('.
+
+    if (
+        *cursor != m->tokens.size &&
+        m->tokens.data[*cursor].type == tt_hash_hash
+    ) pp_error(pp, "'##' cannot be the first token inside '__VA_OPT__'");
 
     size_t parens = 1;
     while (*cursor < m->tokens.size) {
         auto t = &m->tokens.data[(*cursor)++];
         switch (t->type) {
             default: break;
-            case tt_hash: pp_dir_define_check_hash(pp, m, *cursor); break;
-            case tt_hash_hash: pp_dir_define_check_hash_hash(pp, m, *cursor); break;
-            case tt_lparen: parens++; break;
+            case tt_hash:
+                pp_dir_define_check_hash(pp, m, *cursor);
+                break;
+
+            case tt_hash_hash:
+                pp_dir_define_check_hash_hash(pp, m, *cursor);
+                if (
+                    parens == 1 &&
+                    *cursor != m->tokens.size &&
+                    m->tokens.data[*cursor].type == tt_rparen
+                ) pp_error(pp, "'##' cannot be the last token inside '__VA_OPT__'");
+                break;
+
+            case tt_lparen:
+                parens++;
+                break;
+
             case tt_rparen:
                 if (--parens == 0) return *cursor - 1;
                 break;
+
             case tt_pp_va_opt:
                 pp_error(pp, "'__VA_OPT__' cannot be nested");
                 break;
@@ -932,17 +949,20 @@ void pp_dir_define(pp pp) {
         if (!m.is_variadic && (pp->tok.type == tt_pp_va_args || pp->tok.type == tt_pp_va_opt))
             pp_error(pp, "'__VA_OPT__'/'__VA_ARGS__' cannot be used in non-variadic macros");
 
+        // Prohibit '####' since the standard isn’t clear what it’s supposed to mean, and vendors
+        // can’t seem to agree on how it should actually be handled.
+        if (pp->tok.type == tt_hash_hash && m.tokens.size != 0 && vec_back(m.tokens).type == tt_hash_hash)
+            pp_error(pp, "'##' cannot be followed by another '##'");
+
         vec_push(m.tokens, tok_move(&pp->tok));
         pp_read_token_raw(pp);
     }
 
-    if (m.is_function_like) {
-        for (size_t cursor = 0; cursor < m.tokens.size;) {
-            auto t = &m.tokens.data[cursor++];
-            if (t->type == tt_hash) pp_dir_define_check_hash(pp, &m, cursor);
-            else if (t->type == tt_hash_hash) pp_dir_define_check_hash_hash(pp, &m, cursor);
-            else if (t->type == tt_pp_va_opt) t->val = pp_find_va_opt_rparen(pp, &m, &cursor);
-        }
+    for (size_t cursor = 0; cursor < m.tokens.size;) {
+        auto t = &m.tokens.data[cursor++];
+        if (t->type == tt_hash) pp_dir_define_check_hash(pp, &m, cursor);
+        else if (t->type == tt_hash_hash) pp_dir_define_check_hash_hash(pp, &m, cursor);
+        else if (t->type == tt_pp_va_opt) t->val = pp_find_va_opt_rparen(pp, &m, &cursor);
     }
 
     pp_undefine(pp, as_span(m.name));
@@ -963,11 +983,11 @@ void pp_dir_undef(pp pp) {
 
 noreturn pp_error(pp pp, const char *msg) {
     print_loc(pp->tok.loc);
-    printf("fatal error: %s\n", msg);
+    printf("error: %s\n", msg);
     exit(1);
 }
 
-const tok* pp_cur(pp_expansion exp) {
+const tok *pp_cur(pp_expansion exp) {
     assert(exp->cursor < exp->m->tokens.size && "cursor out of bounds");
     return &exp->m->tokens.data[exp->cursor];
 }
@@ -985,7 +1005,7 @@ tokens *pp_get_param_tokens(pp_expansion exp, const tok *t) {
     return &exp->args->data[pp_get_param_index(exp, t)];
 }
 
-/// This implements C23 6.10.5.1 'Argument substitution'.
+/// This implements C2y 6.10.5.2 'Argument substitution'.
 ///
 /// This only handles the case of there not being any preceding #
 /// or ## tokens or any following ##. This *does* handle __VA_ARGS__,
@@ -1015,20 +1035,28 @@ nodiscard tokens *pp_substitute(pp_expansion exp, size_t param_index) {
     // being substituted as if they formed the rest of the preprocessing file with no
     // other preprocessing tokens being available.'
     pp_materialise_look_ahead_toks(pp);
-    pp_enter_token_stream(arg_toks);
+    pp_enter_token_stream(pp, arg_toks, nullptr);
     pp->retain_empty_streams = true;
-    while (!pp_ts_done(&vec_front(pp->token_streams))) {
-        tok t = {};
-        pp_read_and_expand_token(pp, &t);
-        vec_push(*expanded_arg, t);
+    while (!pp_ts_done(&vec_back(pp->token_streams))) {
+        pp_read_and_expand_token(pp);
+        vec_push(*expanded_arg, tok_move(&pp->tok));
     }
     pp->retain_empty_streams = false;
     pp_ts_pop(pp);
+
+    // Insert a space before the first token.
+    if (expanded_arg->size) vec_front(*expanded_arg).whitespace_before = true;
     return expanded_arg;
 }
 
-void pp_paste(pp_expansion exp, const tok* t) {
-    tok* before = &vec_back(exp->expansion);
+void pp_error_at(loc l, const char* err) {
+    print_loc(l);
+    printf("error: %s\n", err);
+    exit(1);
+}
+
+void pp_paste(pp_expansion exp, const tok *t) {
+    tok *before = &vec_back(exp->expansion);
 
     string concat = {};
     pp_stringise_token(&concat, before, false);
@@ -1041,7 +1069,8 @@ void pp_paste(pp_expansion exp, const tok* t) {
     l.c = ' ';
     tok tmp = {};
     tmp.type = lex(&l, &tmp);
-    if (!lex_eof(&l)) pp_error(exp->pp, "token pasting did not produce a valid pp-token");
+
+    if (!lex_eof(&l)) pp_error_at(exp->l, "token pasting did not produce a valid pp-token");
     tmp.loc = before->loc;
     tmp.whitespace_before = before->whitespace_before;
     tmp.start_of_line = before->start_of_line;
@@ -1054,36 +1083,26 @@ nodiscard tok pp_stringise(pp_expansion exp, const tok *t) {
     return pp_stringise_tokens(param, t->loc, t->whitespace_before);
 }
 
-void pp_enter_token_stream(pp pp, tokens *toks) { // clang-format off
+void pp_enter_token_stream(pp pp, tokens *toks, macro m) { // clang-format off
+    if (m) m->expanding = true;
     pp_materialise_look_ahead_toks(pp);
     tokens copy = {};
     vec_for(t, *toks) vec_push(copy, tok_copy(t));
     vec_push(pp->token_streams, (struct token_stream) {
         .kind = ts_toks,
         .toks = {
+            .m = m,
             .toks = copy,
             .cursor = 0,
         },
     });
 } // clang-format on
 
-void pp_defer_stringise_va_opt(pp_expansion exp, const tok* hash) {
+void pp_defer_stringise_va_opt(pp_expansion exp, const tok *hash) {
     assert(!exp->va_opt.stringise && "va_opt not reset");
     exp->va_opt.stringise = true;
     exp->va_opt.stringise_loc = hash->loc;
     exp->va_opt.stringise_whitespace_before = hash->whitespace_before;
-}
-
-void pp_enter_va_opt(pp_expansion exp, const tok* va_opt_token) {
-    exp->va_opt.index = exp->cursor;
-    exp->va_opt.rparen_index = va_opt_token->val;
-    exp->va_opt.start_of_expansion = exp->expansion.size;
-    exp->cursor++; // Yeet '__VA_OPT__'.
-    exp->cursor++; // Yeet '('.
-}
-
-bool pp_in_va_opt(pp_expansion exp) {
-    return exp->va_opt.index != NO_INDEX;
 }
 
 bool pp_has_variadic_args(pp_expansion exp) {
@@ -1093,7 +1112,42 @@ bool pp_has_variadic_args(pp_expansion exp) {
     return param->size != 0;
 }
 
-void pp_expand_impl(pp_expansion exp) {
+void pp_enter_va_opt(pp_expansion exp, const tok *va_opt_token) {
+    exp->va_opt.index = exp->cursor;
+    exp->va_opt.rparen_index = va_opt_token->val;
+    exp->va_opt.start_of_expansion = exp->expansion.size;
+    exp->cursor++; // Yeet '__VA_OPT__'.
+    exp->cursor++; // Yeet '('.
+
+    // If __VA_ARGS__ expands to nothing, discard everything up
+    // to, but NOT including, the closing rparen.
+    if (!pp_has_variadic_args(exp)) {
+        while (exp->cursor != exp->va_opt.rparen_index)
+            exp->cursor++;
+
+        // Per C2y 6.10.5.2p7, the __VA_OPT__ parameter expands to
+        // a single placemarker in this case.
+        exp->va_opt.ends_with_placemarker = true;
+    }
+}
+
+bool pp_in_va_opt(pp_expansion exp) {
+    return exp->va_opt.index != NO_INDEX;
+}
+
+void pp_placemarker(pp_expansion exp) {
+    // ‘Insert’ a ‘placemarker token’, i.e. consume any '##' that
+    // follows or record that we need to consume a '##' if we’re at
+    // the end of a __VA_OPT__ replacement.
+    //
+    // This assumes that we’re looking *at* the '##' or ')'.
+    if (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash)
+        exp->cursor++;
+    else if (pp_in_va_opt(exp) && exp->cursor == exp->va_opt.rparen_index)
+        exp->va_opt.ends_with_placemarker = true;
+}
+
+void pp_expand_function_like_impl(pp_expansion exp) {
     pp_va_opt_reset(exp);
 
     // Process the replacement token list, performing argument substitution,
@@ -1103,6 +1157,42 @@ void pp_expand_impl(pp_expansion exp) {
     // doesn’t exactly lend itself well to direct implementation, for which reason
     // this is largely adapted from Clang’s lexer instead. Roughly, this is how
     // each of these features is implemented.
+    //
+    // The actual hard part here is token pasting, and the implementation of this
+    // feature is spread all throughout the loop, so we explain it here:
+    //
+    // According to the standard, if either argument of '##' is a parameter (which
+    // includes __VA_ARGS__ and '__VA_OPT__(...)') whose corresponding argument is
+    // ‘empty’—i.e. the user provided no tokens for it, or, in the case of __VA_OPT__,
+    // either '__VA_ARGS__' expands to nothing, or we have '__VA_OPT__()' with no
+    // tokens inside the '()'—that parameter is replaced with a ‘placemarker token’.
+    //
+    // Given the sequence 'A##B':
+    //
+    //   - If neither is a placemarker, we perform token pasting.
+    //   - If 'A' is a placemarker, the result is 'B'.
+    //   - If 'B' is a placemarker, the result is 'A'.
+    //   - If both are placemarkers, the result is a placemarker.
+    //
+    // Note that an equivalent, definition without placemarker tokens is:
+    //
+    //   - If neither is empty, we perform token pasting.
+    //   - If 'A' is empty, we discard 'A##'.
+    //   - If 'B' is empty, we discard '##B'.
+    //   - If both are empty, we discard 'A##B'. (*)
+    //
+    // (*) There is one more part to this last point: consider 'A##B##C'. First, it
+    // should be noted that the order of the two is unspecified. We choose to evaluate
+    // them left to right. If 'A' and 'B' are empty, the result is '##C', but more
+    // accurately, it is '<placemarker>##C', i.e. the '##' after 'B' must be discarded
+    // as well.
+    //
+    // Thus, it suffices to correctly discard '##'s whenever the standard would output
+    // a placemarker token.
+    //
+    // Note that we currently ban '####' for reasons described in the '#define' parsing
+    // code, which means that consecutive placemarker tokens are equivalent to a single
+    // placemarker.
     while (exp->cursor < exp->m->tokens.size) {
         auto t = pp_cur(exp);
 
@@ -1111,60 +1201,47 @@ void pp_expand_impl(pp_expansion exp) {
         // Skip '__VA_OPT__(' and mark that we're inside of __VA_OPT__.
         if (t->type == tt_pp_va_opt) {
             pp_enter_va_opt(exp, t);
-            continue;
+            t = pp_cur(exp);
         }
 
-        // We’re inside of __VA_OPT__.
-        if (pp_in_va_opt(exp)) {
-            // This token is not the closing rparen.
-            if (exp->cursor != exp->va_opt.rparen_index) {
-                // Discard it if __VA_ARGS__ expands to nothing.
-                if (!pp_has_variadic_args(exp)) {
-                    exp->cursor++;
-                    continue;
-                }
+        // We’re inside of __VA_OPT__ and just encountered the closing parenthesis.
+        if (pp_in_va_opt(exp) && exp->cursor == exp->va_opt.rparen_index) {
+            exp->cursor++; // Yeet it.
+            assert(
+                (!exp->va_opt.paste_tokens || exp->va_opt.stringise) &&
+                "only paste tokens here if we’re also stringising"
+            );
 
-                // If we *do* have variadic arguments, then let the rest of this loop
-                // process this token.
-            }
-
-            // This *is* the closing rparen.
-            else {
-                exp->cursor++; // Yeet it.
-                assert(
-                    !exp->va_opt.paste_tokens || exp->va_opt.stringise &&
-                    "only paste tokens here if we’re also stringising"
+            // Perform stringising now if we need to. This needs to be done before
+            // token pasting should that also be required. Note that this involves
+            // stringising all the tokens produced by the __VA_OPT__.
+            if (exp->va_opt.stringise) {
+                tokens toks = {};
+                toks.data = exp->expansion.data + exp->va_opt.start_of_expansion;
+                toks.size = exp->expansion.size - exp->va_opt.start_of_expansion;
+                tok s = pp_stringise_tokens(
+                    &toks,
+                    exp->va_opt.stringise_loc,
+                    exp->va_opt.stringise_whitespace_before
                 );
 
-                // Perform stringising now if we need to. This needs to be done before
-                // token pasting should that also be required. Note that this involves
-                // stringising all the tokens produced by the __VA_OPT__.
-                if (exp->va_opt.stringise) {
-                    tokens toks = {};
-                    toks.data = exp->expansion.data + exp->va_opt.start_of_expansion;
-                    toks.size = exp->expansion.size - exp->va_opt.start_of_expansion;
-                    tok s = pp_stringise_tokens(&toks, exp->va_opt.stringise_loc, exp->va_opt.stringise_whitespace_before);
-
-                    // Paste the string literal if need be.
-                    if (exp->va_opt.paste_tokens) {
-                        pp_paste(exp, &s);
-                        tok_free(&s);
-                    } else {
-                        vec_push(exp->expansion, s);
-                    }
+                // This is 'A###__VA_OPT__(...)'
+                //
+                // Paste the string literal if need be.
+                if (exp->va_opt.paste_tokens) {
+                    pp_paste(exp, &s);
+                    tok_free(&s);
+                } else {
+                    vec_push(exp->expansion, s);
                 }
-
-                // If the last token in __VA_OPT__ is a placemarker, discard a single
-                // paste operation to consume the placemarker.
-                if (
-                    exp->va_opt.ends_with_placemarker &&
-                    exp->cursor < exp->m->tokens.size &&
-                    pp_cur(exp)->type == tt_hash_hash
-                ) exp->cursor++;
-
-                pp_va_opt_reset(exp);
-                continue;
             }
+
+            // We have a placemarker here if the last token of '...' in '__VA_OPT__(...)' is a
+            // placemarker, if '...' contains no tokens, or if we have no variadic arguments.
+            bool expands_to_nothing = exp->expansion.size == exp->va_opt.start_of_expansion;
+            if (exp->va_opt.ends_with_placemarker || expands_to_nothing) pp_placemarker(exp);
+            pp_va_opt_reset(exp);
+            continue;
         }
 
         // Stringising operator.
@@ -1184,110 +1261,53 @@ void pp_expand_impl(pp_expansion exp) {
             continue;
         }
 
-        // Token pasting operator.
-        //
-        // The standard specifies this in a rather cumbersome manner; there are several
-        // possible cases we need to handle here; some of them are handled when we encounter
-        // the lhs of '##', some when we encounter the '##' itself. Doing so allows us to
-        // circumvent the need for ‘placemarker tokens’, which the standard uses to deal
-        // with empty pastes.
-        //
-        // Note that '##' always has a lhs and rhs; otherwise, the macro definition would
-        // be invalid, and we would already have errored about this.
-        //
-        // The lhs can be either:
-        //
-        //    1. a parameter (including __VA_ARGS__) whose argument is empty;
-        //    2. a parameter whose argument is *not* empty;
-        //    3. a __VA_OPT__(...) that produces no tokens;
-        //    4. a __VA_OPT__(...) that produces at least one token;
-        //    5. any other token, with no special meaning.
-        //
-        // Cases 1/3 are handled when the parameter/__VA_OPT__(...) is encountered; they are
-        // no-ops, so we simply dropping the '##'. In the standard’s language, this is 'A##'
-        // where 'A' is a placemarker, and we discard both the placemarker and '##'.
-        //
-        // Cases 2/4 can be reduced to 5 by just appending all the tokens involved to the expansion.
-        // We append the singular token in 5 as well, which means that the lhs of the paste operation
-        // is always the last token of the expansion.
-        //
-        // Note that the lhs can’t be '#' or '##':
-        //
-        //   - It can’t be '#' because '###' is lexed as '## #', not '# ##', due to the maximal munch
-        //     rule, and moreover, '#' must be followed by a parameter, which '##' isn’t.
-        //
-        //   - It can’t be '##' because we treat '##' as left-associative and because the last paragraph
-        //     implies that a pasting operation can never result in '##'.
-        //
-        // As for the rhs, it can either be:
-        //
-        //  1. a parameter (including __VA_ARGS__) whose argument is empty;
-        //  2. a parameter whose argument is *not* empty;
-        //  3. __VA_OPT__(...) that produces no tokens;
-        //  4. __VA_OPT__(...) that produces at least one token;
-        //  5. another '##';
-        //  6. a stringising operation on __VA_OPT__, i.e. '#__VA_OPT__(...)';
-        //  7. any other stringising operation, i.e. '#';
-        //  8. any other token, with no special meaning.
-        //
-        // Case 1 means the paste is a no-op, so we drop the rhs and the '##' and do nothing. Case 5 is
-        // handled by treating any sequence of '##' as a single '##' everywhere, which means that
-        // this case is actually impossible.
-        //
-        // FIXME: The following isn’t true. Re-examine all places where the standard produces a placemarker
-        //    and all places where we skip '##'.
-        // We can do this since e.g. 'A####B' is always equivalent
-        // to 'A##B' iff 'A' is not a placemarker (in which.
-        //
-        // Case 3 (which is a no-op) and case 4 can be handled by pasting with the first token after
-        // '__VA_OPT__(' (if there is one), or by doing nothing if we have '__VA_OPT__()'. This reduces
-        // cases 3/4 to the other cases.
-        //
-        // Case 6 can only be handled once we’re done processing the __VA_OPT__(...), so we set a
-        // flag to indicate that we need to perform pasting later and simply drop the '##'. The
-        // actual pasting is then handled when we encounter the right paren of the __VA_OPT__(...).
-        //
-        // Case 7 is implemented by stringising first and then performing a paste with the
-        // resulting token; this reduces it to case 8 since the rhs is always a string literal
-        // in that case.
-        //
-        // Finally, case 2 is handled by pasting with the first token of the parameter, and case 8
-        // by pasting with that token.
+        // Token pasting operator. If 'A' is a placemarker, we will already have discarded
+        // any '##' that follows, so if we get here, 'A' is not a placemarker, and we only
+        // need to check 'B'.
         if (t->type == tt_hash_hash) {
-            // Skip all '##'s (rhs case 5).
-            pp_skip_hash_hash_seq(exp);
+            exp->cursor++; // Yeet '##'.
+            t = pp_cur(exp);
 
-            // The next token is __VA_OPT__ (rhs cases 3/4).
+            // We disallow this in the definition.
+            assert(t->type != tt_hash_hash && "'####' should have been diagnosed");
+
+            // The next token is __VA_OPT__. If it is __VA_OPT__ is non-empty, we paste with
+            // the first token in its token list.
             t = pp_cur(exp);
             if (t->type == tt_pp_va_opt) {
                 pp_enter_va_opt(exp, t);
 
-                // If the next token is ')', we have '__VA_OPT__()', so do nothing. The __VA_OPT__
-                // code will deal with the ')', and the paste is a no-op anyway. Also do this if
-                // the __VA_OPT__ contents are discarded.
-                t = pp_cur(exp);
-                if (t->type == tt_rparen || !pp_has_variadic_args(exp)) continue;
+                // If the '__VA_OPT__(...)' consists of exactly one placemarker, discard it; exit
+                // the __VA_OPT__ context too in that case since there is no other action to take,
+                // and doing so avoids inserting two placemarkers here.
+                if (exp->cursor == exp->va_opt.rparen_index) {
+                    exp->cursor++; // Yeet the closing parenthesis.
+                    pp_va_opt_reset(exp);
+                    continue;
+                }
 
                 // The next token can’t be '##' since '__VA_OPT__(##' is invalid; it also can’t
                 // be another __VA_OPT__ since they can’t be nested. This means the first token
                 // of __VA_OPT__ must fall into one of the other cases, so simply fall through
                 // here and handle it below.
+                t = pp_cur(exp);
             }
 
-            // The next token is '#' (rhs case 6/7).
+            // The next token is '#'.
             if (t->type == tt_hash) {
                 exp->cursor++; // Yeet '#'.
                 auto hash = t;
                 t = pp_cur(exp);
 
-                // Case 6.
+                // If the parameter of '#' is a __VA_OPT__ replacement, then we’ll defer the
+                // pasting (and stringising) until we've processed the __VA_OPT__.
                 if (t->type == tt_pp_va_opt) {
                     exp->va_opt.paste_tokens = true;
                     pp_defer_stringise_va_opt(exp, hash);
                     continue;
                 }
 
-                // Case 7.
+                // Otherwise, stringise, which never produces a placemarker, then paste.
                 exp->cursor++; // Yeet the parameter after '#'.
                 tok str = pp_stringise(exp, t);
                 pp_paste(exp, &str);
@@ -1295,57 +1315,48 @@ void pp_expand_impl(pp_expansion exp) {
                 continue;
             }
 
-            // The next token is a regular (= non-parameter) token (case 8).
+            // The next token is a regular (= non-parameter) token that is not a preprocessor
+            // operator. This is never a placemarker.
             if (!pp_is_param(t)) {
                 exp->cursor++; // Yeet the token.
                 pp_paste(exp, t);
                 continue;
             }
 
-            // The next token is a parameter (cases 1/2).
+            // The next token is a parameter (other than '__VA_OPT__(...)').
             exp->cursor++; // Yeet the parameter.
             auto toks = pp_get_param_tokens(exp, t);
 
-            // Case 1.
-            //
-            // Don’t do anything else here. We only get here if the lhs was
-            // non-empty, i.e. we have 'A##B' w/ 'A' non-empty, 'B' empty,
-            // which results in 'A' with no placemarkers according to the
-            // standard. This means the lhs can still be pasted with something
-            // else if we have e.g. 'A##B##C', so leave any following '##'s
-            // in the input.
-            if (toks->size == 0) continue;
+            // The parameter expands to a placemarker.
+            if (toks->size == 0) {
+                pp_placemarker(exp);
+                continue;
+            }
 
-            // Case 2.
+            // Paste with the first token of the parameter and append any other tokens as-is.
             pp_paste(exp, &vec_front(*toks));
-            vec_for_index(i, *toks)
-                if (i >= 1)
-                    vec_push(exp->expansion, tok_copy(&toks->data[i]));
+            vec_for_index(i, *toks) if (i >= 1)
+                vec_push(exp->expansion, tok_copy(&toks->data[i]));
             continue;
         }
 
-        // If the next token is not a parameter, it must be a regular, non-special
-        // token; such tokens can never be ‘empty’, so we don’t need to worry about
-        // empty pasting just yet.
+        // We’re done with the pasting cases. At this point, if the next token is not a
+        // parameter, it must be a regular, non-special token.
         if (!pp_is_param(t)) {
             exp->cursor++;
             vec_push(exp->expansion, tok_copy(t));
             continue;
         }
 
-        // Otherwise, we’re looking at a parameter. If the next token is '##', handle
-        // the lhs cases 1/2 for '##' (see above).
-        exp->cursor++; // Yeet the parameter.
-        if (exp->cursor < exp->m->tokens.size && exp->m->tokens.data[exp->cursor].type == tt_hash_hash) {
-            auto param = pp_get_param_tokens(exp, t);
+        // Otherwise, we’re looking at a parameter (other than '__VA_OPT__(...)'). Yeet it.
+        exp->cursor++;
 
-            // The parameter expands to nothing; yeet any subsequent paste operations,
-            // since 'A##B' yields 'B' if 'A' is empty, and append its tokens otherwise.
-            if (param->size == 0) {
-                pp_skip_hash_hash_seq(exp);
-            } else {
-                vec_for(p, *param) vec_push(exp->expansion, tok_copy(p));
-            }
+        // If the next token is '##', we must check for placemarkers here, and in any
+        // case, we need to append the argument tokens as-is.
+        if (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash) {
+            auto param = pp_get_param_tokens(exp, t);
+            if (param->size == 0) pp_placemarker(exp);
+            else { vec_for(p, *param) vec_push(exp->expansion, tok_copy(p)); }
             continue;
         }
 
@@ -1353,24 +1364,39 @@ void pp_expand_impl(pp_expansion exp) {
         // in this case, the standard requires that we fully expand it before appending
         // it to the expansion (this does not happen for operands of '#' or '##').
         auto toks = pp_substitute(exp, pp_get_param_index(exp, t));
-        vec_for(p, *toks) vec_push(exp->expansion, tok_copy(p));
+        vec_for(p, *toks) {
+            vec_push(exp->expansion, tok_copy(p));
+            if (t->whitespace_before && p == &vec_front(*toks))
+                vec_back(exp->expansion).whitespace_before = true;
+        }
 
-        // There is an edge case here: if we have '__VA_OPT__(a b)##c' where 'b' is empty,
-        // then we get 'a c' rather than 'ac', i.e. the 'b' acts as a placemarker in that
-        // position. This is only relevant if the '##' is *after* the ')' since a '##' that
-        // comes *before* a __VA_OPT__ is handled differently.
-        if (toks->size == 0 && pp_in_va_opt(exp) && exp->cursor == exp->va_opt.rparen_index)
-            exp->va_opt.ends_with_placemarker = true;
+        // Insert a placemarker here too (this is actually only relevant in an edge case,
+        // namely if this parameter is the A in '__VA_OPT__(...A)##B').
+        if (toks->size == 0) pp_placemarker(exp);
     }
 }
 
-void pp_expand(pp pp, tok *t, macro m, tokens_vec *args) {
-#define DIAG(...)                                                                               \
-    do {                                                                                        \
-        print_loc(t->loc);                                                                      \
-        printf("fatal error in expansion of macro '%.*s': ", (int) m->name.size, m->name.data); \
-        printf("  " __VA_ARGS__);                                                               \
-        exit(1);                                                                                \
+void pp_fini_expansion(pp_expansion exp, bool start_of_line) {
+    if (exp->expansion.size) {
+        auto first = &vec_front(exp->expansion);
+        first->start_of_line = start_of_line;
+        first->whitespace_before = true;
+        pp_enter_token_stream(exp->pp, &exp->expansion, exp->m);
+    }
+
+    vec_delete_els(t, exp->expansion) tok_free(t);
+    vec_delete_els(arg, exp->expanded_args)
+        vec_delete_els(t, *arg)
+            tok_free(t);
+}
+
+void pp_expand_function_like(pp pp, macro m, tokens_vec *args, loc l, bool start_of_line) {
+#define DIAG(...)                                                                         \
+    do {                                                                                  \
+        print_loc(l);                                                                     \
+        printf("error in expansion of macro '%.*s': ", (int) m->name.size, m->name.data); \
+        printf("  " __VA_ARGS__);                                                         \
+        exit(1);                                                                          \
     } while (false)
 
     assert(args);
@@ -1378,23 +1404,18 @@ void pp_expand(pp pp, tok *t, macro m, tokens_vec *args) {
     // Replacement list is empty. Don't bother doing anything.
     if (m->tokens.size == 0) return;
 
-    // If this is a function-like macro, check that we have enough args.
-    if (m->is_function_like) {
-        if (!m->is_variadic) {
-            if (args->size != m->params.size) DIAG(
-                "mismatched macro argument count: expected %zu, got %zu\n",
-                m->params.size,
-                args->size
-            );
-        } else if (args->size < m->params.size) DIAG(
-            "not enough arguments for macro: expected at least %zu, got %zu\n",
+    // Check that we have enough args.
+    if (!m->is_variadic) {
+        if (args->size != m->params.size) DIAG(
+            "mismatched macro argument count: expected %zu, got %zu\n",
             m->params.size,
             args->size
         );
-    }
-
-    // Otherwise, we should have no args at all.
-    else { assert(!args->size && "passing arguments to object-like macro?"); }
+    } else if (args->size < m->params.size) DIAG(
+        "not enough arguments for macro: expected at least %zu, got %zu\n",
+        m->params.size,
+        args->size
+    );
 
     // If there are no variadic arguments passed in by the user, we should have
     // synthesised an empty argument.
@@ -1405,40 +1426,28 @@ void pp_expand(pp pp, tok *t, macro m, tokens_vec *args) {
     exp.pp = pp;
     exp.m = m;
     exp.args = args;
-    pp_expand_impl(&exp);
-
-    // Push the resulting tokens.
-    if (!exp.expansion.size) return;
-
-    // Propagate start of line flags for pretty printing only.
-    auto first = &vec_front(exp.expansion);
-    first->start_of_line = t->start_of_line;
-    first->whitespace_before = t->whitespace_before;
-
-    // TODO
-    pp_enter_token_stream(pp, &exp.expansion);
-    vec_push(pp->token_streams, (struct token_stream) {
-        .kind = ts_macro_expansion,
-        .expansion = (macro_expansion) {
-            .m = m,
-            .toks = expansion,
-            .cursor = 0,
-        },
-    });
-
-    /*// Next, remove all placemarkers.
-    vec_erase_if(t, expansion, t->type == tt_pp_placemarker);
-
-    string s = {};
-    pp_stringise_tokens(&s, &expansion);
-    /*printf("expanded %.*s to ", (int) m->name.size, m->name.data);
-    printf("%.*s\n", (int) s.size, s.data);#1#
-    vec_free(s);*/
-
-    /*// At this point, we’re supposed to do a rescan, but we’ll do that as part of
-    // processing this token sequence.
-    return expansion;*/
+    exp.l = l;
+    pp_expand_function_like_impl(&exp);
+    pp_fini_expansion(&exp, start_of_line);
 #undef DIAG
+}
+
+void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line) {
+    if (m->tokens.size == 0) return;
+    struct pp_expansion exp = {};
+    exp.pp = pp;
+    exp.m = m;
+    exp.l = l;
+    for (; exp.cursor < m->tokens.size; exp.cursor++) {
+        auto t = pp_cur(&exp);
+        if (t->type == tt_hash_hash) {
+            exp.cursor++;
+            pp_paste(&exp, pp_cur(&exp));
+        } else {
+            vec_push(exp.expansion, tok_copy(t));
+        }
+    }
+    pp_fini_expansion(&exp, start_of_line);
 }
 
 void pp_fini(pp pp) {
@@ -1458,38 +1467,43 @@ void pp_free_macro(macro m) {
 void pp_get_macro_args(pp pp, macro m, tokens_vec *args) {
     // C23 6.10.5p11: 'The sequence of preprocessing tokens bounded by the outside-most
     // matching parentheses forms the list of arguments for the function-like macro.'
-    size_t parens = 1;
-    vec_push(*args, (tokens) {});
-    while (pp->tok.type != tt_eof && parens) {
-        switch (pp->tok.type) {
-            default: break;
-            case tt_lparen: parens++; break;
-            case tt_rparen:
-                parens--;
-                if (parens == 0) continue;
-                break;
+    if (pp->tok.type != tt_rparen) {
+        size_t parens = 1;
+        vec_push(*args, (tokens) {});
+        while (pp->tok.type != tt_eof && parens) {
+            switch (pp->tok.type) {
+                default: break;
+                case tt_lparen: parens++; break;
+                case tt_rparen:
+                    parens--;
+                    if (parens == 0) continue;
+                    break;
 
-            // ... 'The individual arguments within the list are separated by comma preprocessing
-            // tokens, but comma preprocessing tokens between matching inner parentheses do not
-            // separate arguments.
-            //
-            // ... 'If there is a ... in the identifier-list in the macro definition, then the trailing
-            // arguments (if any), including any separating comma preprocessing tokens, are merged to
-            // form a single item:'
-            case tt_comma:
-                if (parens == 1 && (!m->is_variadic || args->size <= m->params.size)) {
-                    vec_push(*args, (tokens) {});
-                    continue;
-                }
-                break;
+                // ... 'The individual arguments within the list are separated by comma preprocessing
+                // tokens, but comma preprocessing tokens between matching inner parentheses do not
+                // separate arguments.
+                //
+                // ... 'If there is a ... in the identifier-list in the macro definition, then the trailing
+                // arguments (if any), including any separating comma preprocessing tokens, are merged to
+                // form a single item:'
+                case tt_comma:
+                    if (parens == 1 && (!m->is_variadic || args->size <= m->params.size)) {
+                        vec_push(*args, (tokens) {});
+                        continue;
+                    }
+                    break;
+            }
+
+            vec_push(vec_back(*args), tok_move(&pp->tok));
+            pp_read_token_raw(pp);
         }
 
-        vec_push(vec_back(*args), tok_move(&pp->tok));
-        pp_read_token_raw(pp);
+        // Do NOT discard the right parenthesis just yet. We can only do that
+        // *after* expanding the macro so we start reading from its expansion
+        // instead of the rest of the file.
+        if (parens != 0 || pp->tok.type != tt_rparen)
+            pp_error(pp, "unmatched ')' in macro argument list");
     }
-
-    if (parens != 0 || pp->tok.type != tt_rparen)
-        pp_error(pp, "unmatched ')' in macro argument list");
 
     // ... 'if there are as many arguments as named parameters, the macro invocation behaves as if
     // a comma token has been appended to the argument list such that variable arguments are formed
@@ -1506,12 +1520,11 @@ macro pp_get_expandable_macro(pp pp, span name) {
 
 macro pp_get_macro_and_args(pp pp, tokens_vec *args, span name) {
     auto m = pp_get_expandable_macro(pp, name);
-    if (!m->is_function_like) return m;
+    if (!m || !m->is_function_like) return m;
     if (pp_look_ahead(pp, 1)->type != tt_lparen) return nullptr;
     pp_read_token_raw(pp);
     pp_read_token_raw(pp);
-    if (pp->tok.type != tt_rparen) pp_get_macro_args(pp, m, args);
-    pp_read_token_raw(pp);
+    pp_get_macro_args(pp, m, args);
     return m;
 }
 
@@ -1533,36 +1546,42 @@ tok *pp_look_ahead(pp pp, size_t n) {
 void pp_materialise_look_ahead_toks(pp pp) {
     vec_erase_if(t, pp->look_ahead_tokens, t->type == tt_eof);
     if (!pp->look_ahead_tokens.size) return;
-    vec_push(pp->token_streams, (struct token_stream) {
-                                    .kind = ts_toks,
-                                    .toks = (token_buffer) {
-                                        .toks = pp->look_ahead_tokens,
-                                        .cursor = 0,
-                                    },
-                                });
+    vec_push(
+        pp->token_streams,
+        (struct token_stream) {
+            .kind = ts_toks,
+            .toks = (token_buffer) {
+                .toks = pp->look_ahead_tokens,
+                .cursor = 0,
+            },
+        }
+    );
     pp->look_ahead_tokens = (tokens) {};
 }
 
-void pp_preprocess(pp pp, tok *t) {
-    if (t->type == tt_hash) {
-        if (!t->start_of_line) pp_error(pp, "unexpected #");
-        pp_read_token_raw(pp, t);
+void pp_preprocess(pp pp) {
+    if (pp->tok.type == tt_hash) {
+        if (!pp->tok.start_of_line) pp_error(pp, "unexpected #");
+        pp_read_token_raw(pp);
 
         // TODO: handle the GNU '#' directive.
-        if (t->type != tt_pp_name)
+        if (pp->tok.type != tt_pp_name)
             pp_error(pp, "expected preprocessor directive");
 
-        if (eq(t->name, lit_span("define"))) pp_dir_define(pp);
-        else if (eq(t->name, lit_span("undef"))) pp_dir_undef(pp);
+        if (eq(pp->tok.name, lit_span("define"))) pp_dir_define(pp);
+        else if (eq(pp->tok.name, lit_span("undef"))) pp_dir_undef(pp);
         else pp_error(pp, "unknown preprocessor directive");
-        return pp_preprocess(pp, t);
+        return pp_preprocess(pp);
     }
 
-    if (t->type == tt_pp_name) {
+    if (pp->tok.type == tt_pp_name) {
         tokens_vec args = {};
-        macro m = pp_get_macro_and_args(pp, &args, as_span(t->name));
+        loc l = pp->tok.loc;
+        bool sol = pp->tok.start_of_line;
+        macro m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.name));
         if (m && !m->expanding) {
-            pp_expand(pp, m, &args);
+            if (m->is_function_like) pp_expand_function_like(pp, m, &args, l, sol);
+            else pp_expand_object_like(pp, m, l, sol);
             pp_read_token_raw(pp);
             return pp_preprocess(pp);
         }
@@ -1571,30 +1590,30 @@ void pp_preprocess(pp pp, tok *t) {
     // TODO: Concatenate adjacent string literal tokens here.
 }
 
-void pp_read_token(pp pp, tok *t) {
-    pp_read_and_expand_token(pp, t);
-    pp_conv(pp, t);
+void pp_read_token(pp pp) {
+    pp_read_and_expand_token(pp);
+    pp_conv(pp);
 }
 
-void pp_read_and_expand_token(pp pp, tok *t) {
-    pp_read_token_raw(pp, t);
-    pp_preprocess(pp, t);
+void pp_read_and_expand_token(pp pp) {
+    pp_read_token_raw(pp);
+    pp_preprocess(pp);
 }
 
-void pp_read_token_raw(pp pp, tok *t) {
-    pp_read_token_raw_impl(pp, t, true);
+void pp_read_token_raw(pp pp) {
+    pp_read_token_raw_impl(pp, true);
 }
 
-void pp_read_token_raw_impl(pp pp, tok *t, bool include_look_ahead) {
+void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
     if (include_look_ahead && pp->look_ahead_tokens.size) {
-        tok_move_into(t, &vec_front(pp->look_ahead_tokens));
+        tok_move_into(&pp->tok, &vec_front(pp->look_ahead_tokens));
         vec_pop_front(pp->look_ahead_tokens);
         return;
     }
 
     while (pp->token_streams.size && pp_ts_done(&vec_back(pp->token_streams))) {
         if (pp->retain_empty_streams) {
-            t->type = tt_eof;
+            pp->tok.type = tt_eof;
             return;
         }
 
@@ -1602,23 +1621,18 @@ void pp_read_token_raw_impl(pp pp, tok *t, bool include_look_ahead) {
     }
 
     if (!pp->token_streams.size) {
-        t->type = tt_eof;
+        pp->tok.type = tt_eof;
         return;
     }
 
     auto ts = &vec_back(pp->token_streams);
     switch (ts->kind) {
-        case ts_lexer: t->type = lex(&ts->lex, t); break;
-        case ts_macro_expansion:
-            tok_move_into(t, &ts->expansion.toks.data[ts->expansion.cursor++]);
-            break;
-        case ts_toks:
-            tok_move_into(t, &ts->toks.toks.data[ts->toks.cursor++]);
-            break;
+        case ts_lexer: pp->tok.type = lex(&ts->lex, &pp->tok); break;
+        case ts_toks: tok_move_into(&pp->tok, &ts->toks.toks.data[ts->toks.cursor++]); break;
     }
 
-    if (t->type == tt_eof)
-        pp_read_token_raw_impl(pp, t, include_look_ahead);
+    if (pp->tok.type == tt_eof)
+        pp_read_token_raw_impl(pp, include_look_ahead);
 }
 
 void pp_stringise_str(string *s, span str, char delim) {
@@ -1735,7 +1749,6 @@ tok pp_stringise_tokens(const tokens *toks, loc l, bool whitespace_before) {
 bool pp_ts_done(token_stream s) {
     switch (s->kind) {
         case ts_lexer: return lex_eof(&s->lex);
-        case ts_macro_expansion: return s->expansion.cursor == s->expansion.toks.size;
         case ts_toks: return s->toks.cursor == s->toks.toks.size;
     }
 
@@ -1746,8 +1759,10 @@ void pp_ts_pop(pp pp) {
     auto ts = vec_pop(pp->token_streams);
     switch (ts.kind) {
         case ts_lexer: free(ts.lex.data); return;
-        case ts_macro_expansion: ts.expansion.m->expanding = false; return;
-        case ts_toks: vec_free(ts.toks.toks); return;
+        case ts_toks:
+            vec_free(ts.toks.toks);
+            if (ts.toks.m) ts.toks.m->expanding = false;
+            return;
     }
 
     die("unreachable");
@@ -1802,17 +1817,16 @@ void print_escaped_name(tok *t) {
 
 void dump_tokens(pp pp) {
     bool first = true;
-    tok t = {};
     for (;;) {
-        pp_read_token(pp, &t);
-        if (t.type != tt_eof) break;
+        pp_read_token(pp);
+        if (pp->tok.type == tt_eof) break;
         if (first) first = false;
-        else if (t.start_of_line) putchar('\n');
-        else if (t.whitespace_before) putchar(' ');
-        if (t.type == tt_char || t.type == tt_string) print_escaped_name(&t);
+        else if (pp->tok.start_of_line) putchar('\n');
+        else if (pp->tok.whitespace_before) putchar(' ');
+        if (pp->tok.type == tt_char || pp->tok.type == tt_string) print_escaped_name(&pp->tok);
         else {
             string s = {};
-            pp_stringise_token(&s, &t, false);
+            pp_stringise_token(&s, &pp->tok, false);
             printf("%.*s", (int) s.size, s.data);
         }
     }
