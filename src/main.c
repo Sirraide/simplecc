@@ -405,6 +405,7 @@ typedef vec(string) strings;
 typedef vec(tokens) tokens_vec;
 
 typedef struct lexer {
+    u32 pp_if_depth;
     loc loc;
     char *data;
     const char *char_ptr;
@@ -589,6 +590,7 @@ tt lex(lexer l, tok *t) {
     lex_skip_ws(l);
     t->start_of_line = l->start_of_line;
     t->whitespace_before = l->whitespace_before;
+    t->loc = l->loc;
 
     if (lex_eof(l))
         return tt_eof;
@@ -966,6 +968,11 @@ void pp_dir_define(pp pp) {
     vec_push(pp->defs, m);
 }
 
+void pp_skip_line_raw(pp pp) {
+    do pp_read_token_raw(pp);
+    while (pp->tok.type != tt_eof && !pp->tok.start_of_line);
+}
+
 void pp_dir_undef(pp pp) {
     pp_read_token_raw(pp);
 
@@ -977,8 +984,50 @@ void pp_dir_undef(pp pp) {
         printf("warning: macro '%.*s' is not defined\n", (int) pp->tok.name.size, pp->tok.name.data);
     }
 
-    do pp_read_token_raw(pp);
-    while (!pp->tok.start_of_line);
+    pp_skip_line_raw(pp);
+}
+
+bool pp_lexing_file(pp pp) {
+    return pp->token_streams.size && vec_back(pp->token_streams).kind == ts_lexer;
+}
+
+lexer pp_lexer(pp pp) {
+    assert(pp_lexing_file(pp));
+    return &vec_back(pp->token_streams).lex;
+}
+
+void pp_dir_ifdef(pp pp, bool ifdef) {
+    pp_read_token_raw(pp);
+
+    if (pp->tok.type != tt_pp_name)
+        pp_error(pp, "expected macro name");
+
+    bool defined = vec_find_if(p, pp->defs, eq(p->name, pp->tok.name)) != nullptr;
+    if (defined == ifdef) {
+        pp_lexer(pp)->pp_if_depth++;
+        pp_skip_line_raw(pp);
+        return;
+    }
+
+    for (;;) {
+        pp_skip_line_raw(pp);
+        if (pp->tok.type == tt_eof) pp_error(pp, "unterminated #if(n)def");
+        if (pp->tok.type == tt_hash && pp_lexing_file(pp)) {
+            pp_read_token_raw(pp);
+            if (pp->tok.type == tt_pp_name && eq(pp->tok.name, lit_span("endif"))) {
+                pp_skip_line_raw(pp);
+                return;
+            }
+        }
+    }
+}
+
+void pp_dir_endif(pp pp) {
+    if (!pp_lexing_file(pp) || !pp_lexer(pp)->pp_if_depth)
+        pp_error(pp, "unexpected #endif");
+
+    pp_lexer(pp)->pp_if_depth--;
+    pp_skip_line_raw(pp);
 }
 
 noreturn pp_error(pp pp, const char *msg) {
@@ -1563,7 +1612,7 @@ void pp_materialise_look_ahead_toks(pp pp) {
 
 void pp_preprocess(pp pp) {
     if (pp->tok.type == tt_hash) {
-        if (!pp->tok.start_of_line) pp_error(pp, "unexpected #");
+        if (!pp->tok.start_of_line || !pp_lexing_file(pp)) pp_error(pp, "unexpected #");
         pp_read_token_raw(pp);
 
         // TODO: handle the GNU '#' directive.
@@ -1572,6 +1621,9 @@ void pp_preprocess(pp pp) {
 
         if (eq(pp->tok.name, lit_span("define"))) pp_dir_define(pp);
         else if (eq(pp->tok.name, lit_span("undef"))) pp_dir_undef(pp);
+        else if (eq(pp->tok.name, lit_span("ifdef"))) pp_dir_ifdef(pp, true);
+        else if (eq(pp->tok.name, lit_span("ifndef"))) pp_dir_ifdef(pp, false);
+        else if (eq(pp->tok.name, lit_span("endif"))) pp_dir_endif(pp);
         else pp_error(pp, "unknown preprocessor directive");
         return pp_preprocess(pp);
     }
@@ -1762,7 +1814,10 @@ bool pp_ts_done(token_stream s) {
 void pp_ts_pop(pp pp) {
     auto ts = vec_pop(pp->token_streams);
     switch (ts.kind) {
-        case ts_lexer: free(ts.lex.data); return;
+        case ts_lexer:
+            if (ts.lex.pp_if_depth) pp_error_at(ts.lex.loc, "missing #endif at end of file");
+            free(ts.lex.data);
+            return;
         case ts_toks:
             vec_free(ts.toks.toks);
             if (ts.toks.m) ts.toks.m->expanding = false;
