@@ -23,6 +23,7 @@ typedef struct pp_expansion {
     macro m;                  ///< The macro being expanded.
     loc l;                    ///< Expansion location.
     bool insert_whitespace;   ///< Whether the next token gets whitespace inserted before it.
+    bool paste_before;        ///< The next token we append must be pasted with the preceding token instead.
 } *pp_expansion;
 
 // ====================================================================
@@ -450,7 +451,6 @@ static tok pp_stringise(pp_expansion exp, const tok *t) {
     return pp_stringise_tokens(param, t->loc, t->whitespace_before);
 }
 
-
 static void pp_defer_stringise_va_opt(pp_expansion exp, const tok *hash) {
     assert(!exp->va_opt.stringise && "va_opt not reset");
     exp->va_opt.stringise = true;
@@ -485,12 +485,17 @@ static void pp_enter_va_opt(pp_expansion exp, const tok *va_opt_token) {
 }
 
 static void pp_placemarker(pp_expansion exp) {
-    // ‘Insert’ a ‘placemarker token’, i.e. consume any '##' that
-    // follows or record that we need to consume a '##' if we’re at
-    // the end of a __VA_OPT__ replacement.
+    // ‘Insert’ a ‘placemarker token’. A placemarker token can only be ‘used once’
+    // since pasting with a placemarker deletes the placemarker:
     //
-    // This assumes that we’re looking *at* the '##' or ')'.
-    if (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash)
+    //  - discard any preceding '##' by resetting the paste_before flag; or
+    //  - discard any following '##' by skipping past it; or
+    //  - if we’re at the end of __VA_OPT__, remember that it ends with a placemarker;
+    //  - otherwise, just drop the placemarker since it’s nowhere near a '##'.
+    //
+    if (exp->paste_before)
+        exp->paste_before = false;
+    else if (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash)
         exp->cursor++;
     else if (pp_in_va_opt(exp) && exp->cursor == exp->va_opt.rparen_index)
         exp->va_opt.ends_with_placemarker = true;
@@ -502,6 +507,13 @@ static void pp_va_opt_reset(pp_expansion exp) {
 }
 
 static void pp_append(pp_expansion exp, tok t) {
+    if (exp->paste_before) {
+        exp->paste_before = false;
+        pp_paste(exp, &t);
+        tok_free(&t);
+        return;
+    }
+
     if (exp->insert_whitespace) {
         exp->insert_whitespace = false;
         t.whitespace_before = true;
@@ -510,11 +522,7 @@ static void pp_append(pp_expansion exp, tok t) {
     vec_push(exp->expansion, t);
 }
 
-static void pp_append_toks(pp_expansion exp, const tokens* toks, const tok* expanded_from) {
-    // If the tokens are empty, insert a placemarker. This is important if the
-    // next token is '##'; if we’re inserting fully expanded tokens, then this
-    // is actually only relevant in an edge case, namely if this parameter is
-    // the A in '__VA_OPT__(...A)##B'.
+static void pp_append_toks(pp_expansion exp, const tokens *toks, const tok *expanded_from) {
     if (expanded_from->whitespace_before) exp->insert_whitespace = true;
     if (toks->size == 0) pp_placemarker(exp);
     else { vec_for(p, *toks) pp_append(exp, tok_copy(p)); }
@@ -653,25 +661,15 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
             // We disallow this in the definition.
             assert(t->type != tt_hash_hash && "'####' should have been diagnosed");
 
-            // The next token is __VA_OPT__. If it is __VA_OPT__ is non-empty, we paste with
-            // the first token in its token list.
+            // The next token is __VA_OPT__. Defer pasting until later.
+            //
+            // We can’t simply paste with the first token within __VA_OPT__ because the
+            // expansion rules are different: in '##__VA_OPT__(B)', the 'B' is technically
+            // not adjacent to a '##', which means its contents are fully substituted instead
+            // of just inserted as-is.
             if (t->type == tt_pp_va_opt) {
-                pp_enter_va_opt(exp, t);
-
-                // If the '__VA_OPT__(...)' consists of exactly one placemarker, discard it; exit
-                // the __VA_OPT__ context too in that case since there is no other action to take,
-                // and doing so avoids inserting two placemarkers here.
-                if (exp->cursor == exp->va_opt.rparen_index) {
-                    exp->cursor++; // Yeet the closing parenthesis.
-                    pp_va_opt_reset(exp);
-                    continue;
-                }
-
-                // The next token can’t be '##' since '__VA_OPT__(##' is invalid; it also can’t
-                // be another __VA_OPT__ since they can’t be nested. This means the first token
-                // of __VA_OPT__ must fall into one of the other cases, so simply fall through
-                // here and handle it below.
-                t = pp_cur(exp);
+                exp->paste_before = true;
+                continue;
             }
 
             // The next token is '#'.
@@ -715,12 +713,8 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
             if (toks->size == 0) continue;
 
             // Paste with the first token of the parameter and append any other tokens as-is.
-            pp_paste(exp, &vec_front(*toks));
-            vec_for_index(i, *toks) {
-                if (i >= 1) {
-                    pp_append(exp, tok_copy(&toks->data[i]));
-                }
-            }
+            exp->paste_before = true;
+            pp_append_toks(exp, toks, t);
             continue;
         }
 

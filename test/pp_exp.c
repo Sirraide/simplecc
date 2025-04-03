@@ -439,7 +439,7 @@ static int glob = (1 + FUNC(1 RPAREN );
 #undef G
 
 // + 8: HT_
-// + 9: TONG C ( ) B ( ) "A()"     <<< BUG
+// + 9: TONG C ( ) B ( ) "A()"
 #define HT_B() TONG
 #define F(x, ...) HT_ ## __VA_OPT__(x x A()  #x)
 8: F(1)
@@ -509,7 +509,7 @@ static int glob = (1 + FUNC(1 RPAREN );
 #undef G
 
 // + 27: B 11
-// + 27_1: BexpandedA0 11                              <<< BUG
+// + 27_1: BexpandedA0 11
 // + 28: B 11
 #define F(a,...)  B ## __VA_OPT__(a 1) ## 1
 #define G(a,...)  B ## __VA_OPT__(a ## a 1) ## 1
