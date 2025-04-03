@@ -598,6 +598,11 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
                     exp->va_opt.stringise_whitespace_before
                 );
 
+                // Drop all the tokens that __VA_OPT__ produced.
+                for (size_t i = exp->va_opt.start_of_expansion; i < exp->expansion.size; i++)
+                    tok_free(&exp->expansion.data[i]);
+                vec_resize(exp->expansion, exp->va_opt.start_of_expansion);
+
                 // This is 'A###__VA_OPT__(...)'
                 //
                 // Paste the string literal if need be.
