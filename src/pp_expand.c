@@ -412,6 +412,7 @@ static tok pp_stringise_tokens(pp *pp, const tokens *toks, loc l, bool whitespac
     str.loc = l;
     str.type = tt_string;
     str.whitespace_before = whitespace_before;
+    vec_free(s);
     return str;
 }
 
@@ -424,7 +425,7 @@ static void pp_paste(pp_expansion exp, const tok *t) {
     if (str_starts_with(concat, lit_span("//")) || str_starts_with(concat, lit_span("/*")))
         pp_error_at(exp->l, "token pasting cannot produce comments");
 
-    struct lexer l = {};
+    lexer l = {};
     lexer_init(&l, &exp->pp->string_alloc, lit_span("<paste>"), as_span(concat));
     l.loc = before->loc;
     l.c = ' ';
@@ -680,7 +681,7 @@ static void pp_fini_expansion(pp_expansion exp, bool start_of_line, bool ws_befo
         pp_enter_token_stream(exp->pp, exp->expansion, exp->m);
     }
 
-    vec_free(exp->expanded_args);
+    vec_delete_els(arg, exp->expanded_args) vec_free(*arg);
 }
 
 static void pp_expand_function_like(

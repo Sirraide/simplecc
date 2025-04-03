@@ -18,6 +18,6 @@ target_compile_options(simplecc PRIVATE
 )
 
 if (ENABLE_ASAN)
-	target_compile_options(simplecc PRIVATE -fsanitize=undefined,address)
-	target_link_options(simplecc PRIVATE -fsanitize=undefined,address)
+	target_compile_options(simplecc PRIVATE -fsanitize=address)
+	target_link_options(simplecc PRIVATE -fsanitize=address)
 endif()

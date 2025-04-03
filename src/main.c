@@ -57,6 +57,7 @@ void print_escaped_name(tok *t) {
 
 void dump_tokens(pp *pp) {
     bool first = true;
+    string s = {};
     for (;;) {
         pp_read_token(pp);
         if (pp->tok.type == tt_eof) break;
@@ -65,11 +66,12 @@ void dump_tokens(pp *pp) {
         else if (pp->tok.whitespace_before) putchar(' ');
         if (pp->tok.type == tt_char || pp->tok.type == tt_string) print_escaped_name(&pp->tok);
         else {
-            string s = {};
+            vec_clear(s);
             pp_stringise_token(&s, &pp->tok, false);
             printf("%.*s", (int) s.size, s.data);
         }
     }
+    vec_free(s);
     putchar('\n');
 }
 
