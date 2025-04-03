@@ -129,7 +129,7 @@ typedef struct tok {
     bool whitespace_before;
 
     /// The contents of a string, character literal, or identifier.
-    string name;
+    span text;
 
     /// The value of a numeric literal; for a __VA_OPT__ token, the
     /// index of the matching closing parenthesis.
@@ -137,13 +137,14 @@ typedef struct tok {
 } tok;
 
 typedef vec(tok) tokens;
-typedef vec(string) strings;
+typedef vec(span) span_vec;
 typedef vec(tokens) tokens_vec;
 
 typedef struct lexer {
+    struct obstack* string_alloc;
+    string tmp;
     u32 pp_if_depth;
     loc loc;
-    char *data;
     const char *char_ptr;
     const char *end_ptr;
     char c;
@@ -159,17 +160,10 @@ typedef struct token_buffer {
 } token_buffer;
 
 tt lex(lexer l, tok *t);
+void lex_free(lexer l);
+void lexer_init(lexer l, struct obstack* string_alloc, span filename, span contents);
 bool lex_eof(lexer l);
-
 void print_loc(loc l);
-
-// TODO: Store all string data for tokens in the pp so we can just store a span in the token (and so tokens are trivially copyable);
-//       delete all of these functions (other than reset) once that is done.
-tok tok_copy(const tok *t);
-void tok_free(tok *t);
-tok tok_move(tok *t);
-void tok_move_into(tok *a, tok *b);
 void tok_reset(tok* t);
-void tokens_free(tokens* toks);
 
 #endif // LEX_H

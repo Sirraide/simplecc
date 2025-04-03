@@ -36,7 +36,7 @@ static void pp_dir_ifdef(pp pp, bool ifdef) {
     if (pp->tok.type != tt_pp_name || pp->tok.start_of_line)
         pp_error(pp, "expected macro name");
 
-    bool defined = vec_find_if(p, pp->defs, eq(p->name, pp->tok.name)) != nullptr;
+    bool defined = vec_find_if(p, pp->defs, eq(p->name, pp->tok.text)) != nullptr;
     if (defined == ifdef) {
         pp_lexer(pp)->pp_if_depth++;
         pp_skip_line_raw(pp);
@@ -48,7 +48,7 @@ static void pp_dir_ifdef(pp pp, bool ifdef) {
         if (pp->tok.type == tt_eof) pp_error(pp, "unterminated #if(n)def");
         if (pp->tok.type == tt_hash && pp_lexing_file(pp)) {
             pp_read_token_raw(pp);
-            if (pp->tok.type == tt_pp_name && eq(pp->tok.name, lit_span("endif"))) {
+            if (pp->tok.type == tt_pp_name && eq(pp->tok.text, lit_span("endif"))) {
                 pp_skip_line_raw(pp);
                 return;
             }
@@ -82,9 +82,9 @@ static void pp_dir_include(pp pp) {
     vec_clear(s);
     str_cat(s, (span) {.data = resolved, .size = len});
     str_cat_char(s, '/');
-    str_cat(s, pp->tok.name);
+    str_cat(s, pp->tok.text);
     str_cat_char(s, 0);
-    pp_add_lexer(pp, s.data);
+    pp_add_lexer_for_file(pp, s.data);
     pp_skip_line_raw(pp);
     vec_free(s);
     free(resolved);
@@ -97,20 +97,20 @@ static void pp_dir_undef(pp pp) {
     if (pp->tok.type != tt_pp_name || pp->tok.start_of_line)
         pp_error(pp, "expected macro name");
 
-    if (!pp_undefine(pp, as_span(pp->tok.name))) {
+    if (!pp_undefine(pp, as_span(pp->tok.text))) {
         print_loc(pp->tok.loc);
-        printf("warning: macro '%.*s' is not defined\n", (int) pp->tok.name.size, pp->tok.name.data);
+        printf("warning: macro '%.*s' is not defined\n", (int) pp->tok.text.size, pp->tok.text.data);
     }
 
     pp_skip_line_raw(pp);
 }
 
 void pp_dir(pp pp) {
-    if (eq(pp->tok.name, lit_span("define"))) pp_dir_define(pp);
-    else if (eq(pp->tok.name, lit_span("undef"))) pp_dir_undef(pp);
-    else if (eq(pp->tok.name, lit_span("ifdef"))) pp_dir_ifdef(pp, true);
-    else if (eq(pp->tok.name, lit_span("ifndef"))) pp_dir_ifdef(pp, false);
-    else if (eq(pp->tok.name, lit_span("endif"))) pp_dir_endif(pp);
-    else if (eq(pp->tok.name, lit_span("include"))) pp_dir_include(pp);
+    if (eq(pp->tok.text, lit_span("define"))) pp_dir_define(pp);
+    else if (eq(pp->tok.text, lit_span("undef"))) pp_dir_undef(pp);
+    else if (eq(pp->tok.text, lit_span("ifdef"))) pp_dir_ifdef(pp, true);
+    else if (eq(pp->tok.text, lit_span("ifndef"))) pp_dir_ifdef(pp, false);
+    else if (eq(pp->tok.text, lit_span("endif"))) pp_dir_endif(pp);
+    else if (eq(pp->tok.text, lit_span("include"))) pp_dir_include(pp);
     else pp_error(pp, "unknown preprocessor directive");
 }

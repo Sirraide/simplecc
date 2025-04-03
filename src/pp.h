@@ -17,30 +17,37 @@ typedef struct token_stream {
 } *token_stream;
 
 typedef struct macro {
-    string name;
+    span name;
     tokens tokens;
-    strings params;
+    span_vec params;
     bool is_variadic;
     bool is_function_like;
     bool expanding;
 } *macro;
+
+struct memory_map {
+    const void* ptr;
+    size_t size;
+};
 
 typedef struct pp {
     tok tok;
     tokens look_ahead_tokens;
     vec(struct token_stream) token_streams;
     vec(struct macro) defs;
-    strings filenames;
+    vec(struct memory_map) memory_maps;
+    struct obstack string_alloc;
 } *pp;
 
 noreturn pp_error(pp pp, const char *msg);
 noreturn pp_error_at(loc l, const char *err);
 
-void pp_add_lexer(pp pp, const char *filename);
+void pp_add_lexer_for_file(pp pp, const char *filename);
 void pp_dir(pp pp);
 void pp_do_define(pp pp);
 void pp_enter_token_stream(pp pp, tokens toks, macro m);
 void pp_free(pp pp);
+void pp_init(pp pp);
 bool pp_lexing_file(pp pp);
 tok *pp_look_ahead(pp pp, size_t n);
 bool pp_maybe_expand_macro(pp pp);

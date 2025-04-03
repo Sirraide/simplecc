@@ -211,7 +211,6 @@ typedef vec(char) string;
 #define lit_string(x) ((string) {.data = strdup(x), .size = strlen(x), .capacity = strlen(x) + 1})
 #define lit_span(x)   ((span) {.data = x, .size = sizeof(x) - 1})
 
-#define str_copy(s)        vec_copy(s)
 #define str_cat(s1, ...)   vec_append(s1, __VA_ARGS__)
 #define str_cat_lit(s, l)  vec_append(s, lit_span(l))
 #define str_cat_char(s, c) vec_push(s, c)
@@ -227,5 +226,7 @@ typedef vec(char) string;
     auto s2 = (_s2);                                             \
     s1.size >= s2.size&& memcmp(s1.data, s2.data, s2.size) == 0; \
 })
+
+span str_save(struct obstack* obstack, string* s);
 
 #endif // VECTOR_H

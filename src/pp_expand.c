@@ -98,7 +98,7 @@ static size_t pp_find_va_opt_rparen(pp pp, macro m, size_t *cursor) {
 
 void pp_do_define(pp pp) {
     struct macro m = {};
-    m.name = str_copy(pp->tok.name);
+    m.name = pp->tok.text;
     pp_read_token_raw(pp);
 
     m.is_function_like = pp->tok.type == tt_lparen && !pp->tok.whitespace_before;
@@ -113,10 +113,10 @@ void pp_do_define(pp pp) {
             }
 
             if (pp->tok.type == tt_pp_name) {
-                if (vec_find_if(arg, m.params, eq(*arg, pp->tok.name)))
+                if (vec_find_if(arg, m.params, eq(*arg, pp->tok.text)))
                     pp_error(pp, "duplicate macro argument");
 
-                vec_push(m.params, str_copy(pp->tok.name));
+                vec_push(m.params, pp->tok.text);
                 pp_read_token_raw(pp);
 
                 if (pp->tok.type == tt_comma && !pp->tok.start_of_line) {
@@ -137,9 +137,9 @@ void pp_do_define(pp pp) {
 
     while (!pp->tok.start_of_line) {
         if (pp->tok.type == tt_pp_name) {
-            if (eq(pp->tok.name, lit_span("__VA_ARGS__"))) pp->tok.type = tt_pp_va_args;
-            else if (eq(pp->tok.name, lit_span("__VA_OPT__"))) pp->tok.type = tt_pp_va_opt;
-            else if (vec_find_if(p, m.params, eq(*p, pp->tok.name))) pp->tok.type = tt_pp_param;
+            if (eq(pp->tok.text, lit_span("__VA_ARGS__"))) pp->tok.type = tt_pp_va_args;
+            else if (eq(pp->tok.text, lit_span("__VA_OPT__"))) pp->tok.type = tt_pp_va_opt;
+            else if (vec_find_if(p, m.params, eq(*p, pp->tok.text))) pp->tok.type = tt_pp_param;
         }
 
         if (!m.is_variadic && (pp->tok.type == tt_pp_va_args || pp->tok.type == tt_pp_va_opt))
@@ -150,7 +150,7 @@ void pp_do_define(pp pp) {
         if (pp->tok.type == tt_hash_hash && m.tokens.size != 0 && vec_back(m.tokens).type == tt_hash_hash)
             pp_error(pp, "'##' cannot be followed by another '##'");
 
-        vec_push(m.tokens, tok_move(&pp->tok));
+        vec_push(m.tokens, pp->tok);
         pp_read_token_raw(pp);
     }
 
@@ -179,7 +179,7 @@ static const tok *pp_cur(pp_expansion exp) {
 static size_t pp_get_param_index(pp_expansion exp, const tok *t) {
     assert(t->type != tt_pp_va_opt && "__VA_OPT__ cannot be handled here");
     if (t->type == tt_pp_va_args) return exp->m->params.size;
-    auto idx = vec_find_if_index(p, exp->m->params, eq(*p, t->name));
+    auto idx = vec_find_if_index(p, exp->m->params, eq(*p, t->text));
     assert(idx != NO_INDEX);
     return idx;
 }
@@ -229,7 +229,7 @@ static void pp_get_macro_args(pp pp, macro m, tokens_vec *args) {
                     break;
             }
 
-            vec_push(vec_back(*args), tok_move(&pp->tok));
+            vec_push(vec_back(*args), pp->tok);
             pp_read_token_raw(pp);
         }
 
@@ -276,7 +276,7 @@ static tokens *pp_substitute(pp_expansion exp, size_t param_index) {
 
     // Check if we need to expand this, i.e. if there are any macro names in
     // the argument list. If not, we can append the tokens as is.
-    if (!vec_find_if(a, *arg_toks, a->type == tt_pp_name && pp_get_expandable_macro(pp, as_span(a->name))))
+    if (!vec_find_if(a, *arg_toks, a->type == tt_pp_name && pp_get_expandable_macro(pp, a->text)))
         return arg_toks;
 
     // Allocate space for expansions the first time we get here.
@@ -290,17 +290,12 @@ static tokens *pp_substitute(pp_expansion exp, size_t param_index) {
     // p4: 'The argument’s preprocessing tokens are completely macro replaced before
     // being substituted as if they formed the rest of the preprocessing file with no
     // other preprocessing tokens being available.'
-    {
-        tokens copy = {};
-        vec_for(t, *arg_toks) vec_push(copy, tok_copy(t));
-        pp_enter_token_stream(pp, copy, nullptr);
-    }
-
+    pp_enter_token_stream(pp, vec_copy(*arg_toks), nullptr);
     vec_back(pp->token_streams).toks.keep_when_empty = true;
     for (;;) {
         pp_read_and_expand_token(pp);
         if (pp->tok.type == tt_eof) break;
-        vec_push(*expanded_arg, tok_move(&pp->tok));
+        vec_push(*expanded_arg, pp->tok);
     }
     pp_ts_pop(pp);
     return expanded_arg;
@@ -328,8 +323,8 @@ void pp_stringise_token(string *s, const tok *t, bool escape) {
         case tt_pp_va_args: str_cat_lit(*s, "__VA_ARGS__"); break;
         case tt_pp_va_opt: str_cat_lit(*s, "__VA_OPT__"); break;
         case tt_pp_param: assert(false && "should have been replaced already"); break;
-        case tt_pp_name: str_cat(*s, t->name); break;
-        case tt_int_lit: str_cat(*s, t->name); break;
+        case tt_pp_name: str_cat(*s, t->text); break;
+        case tt_int_lit: str_cat(*s, t->text); break;
         case tt_lparen: str_cat_lit(*s, "("); break;
         case tt_rparen: str_cat_lit(*s, ")"); break;
         case tt_lbrace: str_cat_lit(*s, "{"); break;
@@ -379,19 +374,19 @@ void pp_stringise_token(string *s, const tok *t, bool escape) {
         case tt_question: str_cat_lit(*s, "?"); break;
         case tt_arrow: str_cat_lit(*s, "->"); break;
         case tt_char:
-            if (escape) pp_stringise_str(s, as_span(t->name), '\'');
+            if (escape) pp_stringise_str(s, t->text, '\'');
             else {
                 str_cat_char(*s, '\'');
-                str_cat(*s, t->name);
+                str_cat(*s, t->text);
                 str_cat_char(*s, '\'');
             }
             break;
 
         case tt_string:
-            if (escape) pp_stringise_str(s, as_span(t->name), '\"');
+            if (escape) pp_stringise_str(s, t->text, '\"');
             else {
                 str_cat_char(*s, '"');
-                str_cat(*s, t->name);
+                str_cat(*s, t->text);
                 str_cat_char(*s, '"');
             }
             break;
@@ -403,17 +398,20 @@ void pp_stringise_token(string *s, const tok *t, bool escape) {
     }
 }
 
-static tok pp_stringise_tokens(const tokens *toks, loc l, bool whitespace_before) {
-    tok str = {};
-    str.loc = l;
-    str.type = tt_string;
-    str.whitespace_before = whitespace_before;
+static tok pp_stringise_tokens(pp pp, const tokens *toks, loc l, bool whitespace_before) {
+    string s = {};
     bool first = true;
     vec_for(p, *toks) {
         if (first) first = false;
-        else if (p->whitespace_before) str_cat_char(str.name, ' ');
-        pp_stringise_token(&str.name, p, true);
+        else if (p->whitespace_before) str_cat_char(s, ' ');
+        pp_stringise_token(&s, p, true);
     }
+
+    tok str = {};
+    str.text = str_save(&pp->string_alloc, &s);
+    str.loc = l;
+    str.type = tt_string;
+    str.whitespace_before = whitespace_before;
     return str;
 }
 
@@ -427,19 +425,19 @@ static void pp_paste(pp_expansion exp, const tok *t) {
         pp_error_at(exp->l, "token pasting cannot produce comments");
 
     struct lexer l = {};
+    lexer_init(&l, &exp->pp->string_alloc, lit_span("<paste>"), as_span(concat));
     l.loc = before->loc;
-    l.char_ptr = concat.data;
-    l.end_ptr = concat.data + concat.size;
     l.c = ' ';
     tok tmp = {};
     tmp.type = lex(&l, &tmp);
     vec_free(concat);
+    lex_free(&l);
 
     if (!lex_eof(&l)) pp_error_at(exp->l, "token pasting did not produce a valid pp-token");
     tmp.loc = before->loc;
     tmp.whitespace_before = before->whitespace_before;
     tmp.start_of_line = before->start_of_line;
-    tok_move_into(before, &tmp);
+    *before = tmp;
 
     if (pp_in_va_opt(exp)) exp->va_opt.did_paste = true;
     exp->insert_whitespace = false;
@@ -448,7 +446,7 @@ static void pp_paste(pp_expansion exp, const tok *t) {
 static tok pp_stringise(pp_expansion exp, const tok *t, const tok* hash) {
     tokens *param = pp_get_param_tokens(exp, t);
     assert(param && "'#' must be followed by parameter");
-    return pp_stringise_tokens(param, hash->loc, hash->whitespace_before);
+    return pp_stringise_tokens(exp->pp, param, hash->loc, hash->whitespace_before);
 }
 
 static void pp_defer_stringise_va_opt(pp_expansion exp, const tok *hash) {
@@ -510,7 +508,6 @@ static void pp_append(pp_expansion exp, tok t) {
     if (exp->paste_before) {
         exp->paste_before = false;
         pp_paste(exp, &t);
-        tok_free(&t);
         return;
     }
 
@@ -525,7 +522,7 @@ static void pp_append(pp_expansion exp, tok t) {
 static void pp_append_toks(pp_expansion exp, const tokens *toks, const tok *expanded_from) {
     if (expanded_from->whitespace_before) exp->insert_whitespace = true;
     if (toks->size == 0) pp_placemarker(exp);
-    else { vec_for(p, *toks) pp_append(exp, tok_copy(p)); }
+    else { vec_for(p, *toks) pp_append(exp, *p); }
 }
 
 static void pp_expand_function_like_impl(pp_expansion exp) {
@@ -575,14 +572,13 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
                 toks.data = exp->expansion.data + exp->va_opt.start_of_expansion;
                 toks.size = exp->expansion.size - exp->va_opt.start_of_expansion;
                 tok s = pp_stringise_tokens(
+                    exp->pp,
                     &toks,
                     exp->va_opt.stringise_loc,
                     exp->va_opt.stringise_whitespace_before
                 );
 
                 // Drop all the tokens that __VA_OPT__ produced.
-                for (size_t i = exp->va_opt.start_of_expansion; i < exp->expansion.size; i++)
-                    tok_free(&exp->expansion.data[i]);
                 vec_resize(exp->expansion, exp->va_opt.start_of_expansion);
 
                 // This is where we handle 'A###__VA_OPT__(...)'.
@@ -642,7 +638,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
         // If the next token is not a parameter, just append it.
         if (!pp_is_param(t)) {
             exp->cursor++;
-            pp_append(exp, tok_copy(t));
+            pp_append(exp, *t);
             continue;
         }
 
@@ -684,7 +680,7 @@ static void pp_fini_expansion(pp_expansion exp, bool start_of_line, bool ws_befo
         pp_enter_token_stream(exp->pp, exp->expansion, exp->m);
     }
 
-    vec_delete_els(arg, exp->expanded_args) tokens_free(arg);
+    vec_free(exp->expanded_args);
 }
 
 static void pp_expand_function_like(
@@ -748,7 +744,7 @@ static void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line, boo
             exp.cursor++;
             pp_paste(&exp, pp_cur(&exp));
         } else {
-            vec_push(exp.expansion, tok_copy(t));
+            vec_push(exp.expansion, *t);
         }
     }
     pp_fini_expansion(&exp, start_of_line, ws_before);
@@ -761,12 +757,12 @@ bool pp_maybe_expand_macro(pp pp) {
     loc l = pp->tok.loc;
     bool sol = pp->tok.start_of_line;
     bool ws_before = pp->tok.whitespace_before;
-    macro m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.name));
+    macro m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.text));
 
     if (m && !m->expanding) {
         if (m->is_function_like) {
             pp_expand_function_like(pp, m, &args, l, sol, ws_before);
-            vec_for(arg, args) tokens_free(arg);
+            vec_delete_els(arg, args) vec_free(*arg);
         } else {
             pp_expand_object_like(pp, m, l, sol, ws_before);
         }
