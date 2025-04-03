@@ -45,6 +45,7 @@ static void pp_dir_define_check_hash(pp *pp, pp_macro *m, size_t cursor) {
 }
 
 static void pp_dir_define_check_hash_hash(pp *pp, pp_macro *m, size_t cursor) {
+    m->requires_pasting = true;
     if (cursor == 1 || m->tokens.size == cursor)
         pp_error(pp, "'##' must not occur at the start or end of a macro definition");
 }
@@ -739,15 +740,21 @@ static void pp_expand_object_like(pp *pp, pp_macro *m, loc l, bool start_of_line
     exp.pp = pp;
     exp.m = m;
     exp.l = l;
-    for (; exp.cursor < m->tokens.size; exp.cursor++) {
-        auto t = pp_cur(&exp);
-        if (t->type == tt_hash_hash) {
-            exp.cursor++;
-            pp_paste(&exp, pp_cur(&exp));
-        } else {
-            vec_push(exp.expansion, *t);
+
+    if (m->requires_pasting) {
+        for (; exp.cursor < m->tokens.size; exp.cursor++) {
+            auto t = pp_cur(&exp);
+            if (t->type == tt_hash_hash) {
+                exp.cursor++;
+                pp_paste(&exp, pp_cur(&exp));
+            } else {
+                vec_push(exp.expansion, *t);
+            }
         }
+    } else {
+        exp.expansion = vec_copy(m->tokens);
     }
+
     pp_fini_expansion(&exp, start_of_line, ws_before);
 }
 

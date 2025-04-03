@@ -67,12 +67,12 @@ void pp_add_lexer_for_file(pp *pp, const char *filename) {
     auto name_len = strlen(filename);
     span name = {.data = obstack_copy(&pp->string_alloc, filename, name_len), .size = name_len};
 
-    struct lexer l = {};
+    lexer l = {};
     lexer_init(&l, &pp->string_alloc, name, (span) {.data = contents.ptr, .size = contents.size});
     pp_materialise_look_ahead_toks(pp);
     vec_push(
         pp->token_streams,
-        (struct pp_token_stream) {
+        (pp_token_stream) {
             .kind = pp_token_stream_lexer,
             .lex = l,
         }

@@ -17,12 +17,13 @@ typedef struct pp_token_stream {
 } pp_token_stream;
 
 typedef struct pp_macro {
-    span name;
-    tokens tokens;
-    span_vec params;
-    bool is_variadic;
-    bool is_function_like;
-    bool expanding;
+    span name;             ///< The name of the macro.
+    tokens tokens;         ///< The replacement list of the macro.
+    span_vec params;       ///< The names of the macro parameters.
+    bool is_variadic;      ///< Whether this function-like macro is variadic.
+    bool is_function_like; ///< Whether this even is a function-like macro.
+    bool requires_pasting; ///< Whether this object-like macro contains any '##' characters.
+    bool expanding;        ///< Whether this macro is currently being expanded.
 } pp_macro;
 
 typedef struct pp_memory_map {
