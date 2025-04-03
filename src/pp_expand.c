@@ -528,6 +528,24 @@ static void pp_append_toks(pp_expansion exp, const tokens *toks, const tok *expa
     else { vec_for(p, *toks) pp_append(exp, tok_copy(p)); }
 }
 
+static void pp_do_stringise(pp_expansion exp, bool paste_before) {
+    auto hash = pp_cur(exp);
+    exp->cursor++; // Yeet '#'.
+    auto t = pp_cur(exp);
+
+    // If the next token is __VA_OPT__, it’s easier to handle this
+    // after we’re done processing it.
+    if (t->type == tt_pp_va_opt) {
+        exp->va_opt.paste_tokens = paste_before;
+        pp_defer_stringise_va_opt(exp, hash);
+        return;
+    }
+
+    exp->paste_before = exp->paste_before || paste_before;
+    exp->cursor++; // Yeet parameter.
+    pp_append(exp, pp_stringise(exp, t, hash));
+}
+
 static void pp_expand_function_like_impl(pp_expansion exp) {
     pp_va_opt_reset(exp);
 
@@ -633,19 +651,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
         // Stringising operator.
         if (t->type == tt_hash) {
-            exp->cursor++; // Yeet '#'.
-            auto hash = t;
-            t = pp_cur(exp);
-
-            // If the next token is __VA_OPT__, it’s easier to handle this
-            // after we’re done processing it.
-            if (t->type == tt_pp_va_opt) {
-                pp_defer_stringise_va_opt(exp, hash);
-                continue;
-            }
-
-            exp->cursor++; // Yeet parameter.
-            pp_append(exp, pp_stringise(exp, t, hash));
+            pp_do_stringise(exp, false);
             continue;
         }
 
@@ -672,23 +678,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
             // The next token is '#'.
             if (t->type == tt_hash) {
-                exp->cursor++; // Yeet '#'.
-                auto hash = t;
-                t = pp_cur(exp);
-
-                // If the parameter of '#' is a __VA_OPT__ replacement, then we’ll defer the
-                // pasting (and stringising) until we've processed the __VA_OPT__.
-                if (t->type == tt_pp_va_opt) {
-                    exp->va_opt.paste_tokens = true;
-                    pp_defer_stringise_va_opt(exp, hash);
-                    continue;
-                }
-
-                // Otherwise, stringise, which never produces a placemarker, then paste.
-                exp->cursor++; // Yeet the parameter after '#'.
-                tok str = pp_stringise(exp, t, hash);
-                pp_paste(exp, &str);
-                tok_free(&str);
+                pp_do_stringise(exp, true);
                 continue;
             }
 
