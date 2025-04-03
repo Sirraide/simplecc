@@ -445,10 +445,10 @@ static void pp_paste(pp_expansion exp, const tok *t) {
     exp->insert_whitespace = false;
 }
 
-static tok pp_stringise(pp_expansion exp, const tok *t) {
+static tok pp_stringise(pp_expansion exp, const tok *t, const tok* hash) {
     tokens *param = pp_get_param_tokens(exp, t);
     assert(param && "'#' must be followed by parameter");
-    return pp_stringise_tokens(param, t->loc, t->whitespace_before);
+    return pp_stringise_tokens(param, hash->loc, hash->whitespace_before);
 }
 
 static void pp_defer_stringise_va_opt(pp_expansion exp, const tok *hash) {
@@ -611,9 +611,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
                     tok_free(&exp->expansion.data[i]);
                 vec_resize(exp->expansion, exp->va_opt.start_of_expansion);
 
-                // This is 'A###__VA_OPT__(...)'
-                //
-                // Paste the string literal if need be.
+                // This is where we handle 'A###__VA_OPT__(...)'.
                 if (exp->va_opt.paste_tokens) {
                     pp_paste(exp, &s);
                     tok_free(&s);
@@ -647,7 +645,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
             }
 
             exp->cursor++; // Yeet parameter.
-            pp_append(exp, pp_stringise(exp, t));
+            pp_append(exp, pp_stringise(exp, t, hash));
             continue;
         }
 
@@ -688,7 +686,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
                 // Otherwise, stringise, which never produces a placemarker, then paste.
                 exp->cursor++; // Yeet the parameter after '#'.
-                tok str = pp_stringise(exp, t);
+                tok str = pp_stringise(exp, t, hash);
                 pp_paste(exp, &str);
                 tok_free(&str);
                 continue;
