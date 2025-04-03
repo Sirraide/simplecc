@@ -3,7 +3,12 @@
 
 #define noreturn  __attribute__((__noreturn__)) void
 #define nodiscard __attribute__((__warn_unused_result__))
-#define tail __attribute__((__musttail__))
+
+#if __has_attribute(musttail)
+#    define tail __attribute__((musttail))
+#else
+#    define tail
+#endif
 
 #define assert(x)                                \
     do {                                         \
