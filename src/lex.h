@@ -163,6 +163,8 @@ bool lex_eof(lexer l);
 
 void print_loc(loc l);
 
+// TODO: Store all string data for tokens in the pp so we can just store a span in the token (and so tokens are trivially copyable);
+//       delete all of these functions (other than reset) once that is done.
 tok tok_copy(const tok *t);
 void tok_free(tok *t);
 tok tok_move(tok *t);

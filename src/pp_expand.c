@@ -536,18 +536,13 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
     //
     // The wording for this in the C standard, as ever, is rather obscure, and
     // doesn’t exactly lend itself well to direct implementation, for which reason
-    // this is largely adapted from Clang’s lexer instead. Roughly, this is how
-    // each of these features is implemented.
+    // this is largely adapted from Clang’s lexer instead.
     //
     // The actual annoying part here is token pasting: According to the standard,
-    // if either argument of '##' is a parameter (which includes __VA_ARGS__ and
-    // '__VA_OPT__(...)') whose corresponding argument is ‘empty’—i.e. the user
-    // provided no tokens for it, or, in the case of __VA_OPT__, either '__VA_ARGS__'
-    // expands to nothing, or we have '__VA_OPT__()' with no tokens inside the '()'—
-    // that parameter is replaced with a ‘placemarker token’.
-    //
-    // Pasting a placemarker token with another token does nothing and discards the
-    // placemarker (note: pasting 2 placemarkers leaves us with 1 placemarker).
+    // if either argument of '##' is a parameter whose argument consists of no
+    // tokens, that parameter is replaced with a ‘placemarker token’. Pasting a
+    // placemarker token with another token does nothing and discards the placemarker
+    // (note: pasting 2 placemarkers leaves us with 1 placemarker).
     //
     // We implement 'A##B' by discarding the '##' if 'A' produces a placemarker;
     // otherwise, we set a flag to indicate that a paste operation should happen
@@ -591,21 +586,22 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
                 vec_resize(exp->expansion, exp->va_opt.start_of_expansion);
 
                 // This is where we handle 'A###__VA_OPT__(...)'.
-                if (exp->va_opt.paste_tokens) {
-                    pp_paste(exp, &s);
-                    tok_free(&s);
-                } else {
-                    pp_append(exp, s);
-                }
+                exp->paste_before = exp->va_opt.paste_tokens;
+                pp_append(exp, s);
             }
 
+            // Check if this produced a placemarker (stringising never does).
+            //
             // We have a placemarker here if the last token of '...' in '__VA_OPT__(...)' is a
             // placemarker, if '...' contains no tokens, or if we have no variadic arguments.
             //
             // Note that if we performed token pasting within the __VA_OPT__, then it *did* in
             // fact expand to something, even if the number of tokens hasn’t changed.
-            bool expands_to_nothing = exp->expansion.size == exp->va_opt.start_of_expansion && !exp->va_opt.did_paste;
-            if (exp->va_opt.ends_with_placemarker || expands_to_nothing) pp_placemarker(exp);
+            else {
+                bool expands_to_nothing = exp->expansion.size == exp->va_opt.start_of_expansion && !exp->va_opt.did_paste;
+                if (exp->va_opt.ends_with_placemarker || expands_to_nothing) pp_placemarker(exp);
+            }
+
             pp_va_opt_reset(exp);
             continue;
         }
@@ -643,8 +639,7 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
             continue;
         }
 
-        // We’re done with the pasting cases. At this point, if the next token is not a
-        // parameter, it must be a regular, non-special token.
+        // If the next token is not a parameter, just append it.
         if (!pp_is_param(t)) {
             exp->cursor++;
             pp_append(exp, tok_copy(t));
