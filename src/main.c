@@ -15,8 +15,8 @@ void print_loc(loc l) {
     printf("%.*s:%zu: ", (int) l.file.size, l.file.data, l.line);
 }
 
-span str_save(struct obstack* obstack, string* s) {
-    if (!s->size) return (span){};
+span str_save(struct obstack *obstack, string *s) {
+    if (!s->size) return (span) {};
     char *data = obstack_copy(obstack, s->data, s->size);
     return (span) {.data = data, .size = s->size};
 }
@@ -55,7 +55,7 @@ void print_escaped_name(tok *t) {
     putchar(t->type == tt_char ? '\'' : '\"');
 }
 
-void dump_tokens(pp pp) {
+void dump_tokens(pp *pp) {
     bool first = true;
     for (;;) {
         pp_read_token(pp);

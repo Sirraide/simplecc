@@ -20,7 +20,7 @@ typedef struct pp_expansion {
     tokens_vec *args;         ///< The arguments bound to each parameter + one more for __VA_ARGS__.
     tokens_vec expanded_args; ///< The fully macro-replaced arguments. One for each argument.
     tokens expansion;         ///< The resulting expansion of this macro.
-    macro m;                  ///< The macro being expanded.
+    pp_macro *m;              ///< The macro being expanded.
     loc l;                    ///< Expansion location.
     bool insert_whitespace;   ///< Whether the next token gets whitespace inserted before it.
     bool paste_before;        ///< The next token we append must be pasted with the preceding token instead.
@@ -33,23 +33,23 @@ static bool pp_is_param(const tok *t) {
     return t->type == tt_pp_param || t->type == tt_pp_va_args;
 }
 
-static bool pp_dir_define_check_hash_impl(macro m, size_t cursor) {
+static bool pp_dir_define_check_hash_impl(pp_macro *m, size_t cursor) {
     if (m->tokens.size == cursor) return false;
     auto t = &m->tokens.data[cursor];
     return pp_is_param(t) || t->type == tt_pp_va_opt;
 }
 
-static void pp_dir_define_check_hash(pp pp, macro m, size_t cursor) {
+static void pp_dir_define_check_hash(pp *pp, pp_macro *m, size_t cursor) {
     if (m->is_function_like && !pp_dir_define_check_hash_impl(m, cursor))
         pp_error(pp, "expected parameter name or '__VA_OPT__' after '#'");
 }
 
-static void pp_dir_define_check_hash_hash(pp pp, macro m, size_t cursor) {
+static void pp_dir_define_check_hash_hash(pp *pp, pp_macro *m, size_t cursor) {
     if (cursor == 1 || m->tokens.size == cursor)
         pp_error(pp, "'##' must not occur at the start or end of a macro definition");
 }
 
-static size_t pp_find_va_opt_rparen(pp pp, macro m, size_t *cursor) {
+static size_t pp_find_va_opt_rparen(pp *pp, pp_macro *m, size_t *cursor) {
     if (
         *cursor == m->tokens.size ||
         m->tokens.data[*cursor].type != tt_lparen
@@ -96,8 +96,8 @@ static size_t pp_find_va_opt_rparen(pp pp, macro m, size_t *cursor) {
     pp_error(pp, "missing ')' after '__VA_OPT__'");
 }
 
-void pp_do_define(pp pp) {
-    struct macro m = {};
+void pp_do_define(pp *pp) {
+    pp_macro m = {};
     m.name = pp->tok.text;
     pp_read_token_raw(pp);
 
@@ -189,13 +189,13 @@ static tokens *pp_get_param_tokens(pp_expansion exp, const tok *t) {
     return &exp->args->data[pp_get_param_index(exp, t)];
 }
 
-static macro pp_get_expandable_macro(pp pp, span name) {
+static pp_macro *pp_get_expandable_macro(pp *pp, span name) {
     auto macro = vec_find_if(m, pp->defs, eq(m->name, name));
     if (!macro || macro->expanding) return nullptr;
     return macro;
 }
 
-static void pp_get_macro_args(pp pp, macro m, tokens_vec *args) {
+static void pp_get_macro_args(pp *pp, pp_macro *m, tokens_vec *args) {
     // C23 6.10.5p11: 'The sequence of preprocessing tokens bounded by the outside-most
     // matching parentheses forms the list of arguments for the function-like macro.'
     if (pp->tok.type == tt_rparen) {
@@ -247,7 +247,7 @@ static void pp_get_macro_args(pp pp, macro m, tokens_vec *args) {
         vec_push(*args, (tokens) {});
 }
 
-static macro pp_get_macro_and_args(pp pp, tokens_vec *args, span name) {
+static pp_macro *pp_get_macro_and_args(pp *pp, tokens_vec *args, span name) {
     auto m = pp_get_expandable_macro(pp, name);
     if (!m || !m->is_function_like) return m;
     if (pp_look_ahead(pp, 1)->type != tt_lparen) return nullptr;
@@ -398,7 +398,7 @@ void pp_stringise_token(string *s, const tok *t, bool escape) {
     }
 }
 
-static tok pp_stringise_tokens(pp pp, const tokens *toks, loc l, bool whitespace_before) {
+static tok pp_stringise_tokens(pp *pp, const tokens *toks, loc l, bool whitespace_before) {
     string s = {};
     bool first = true;
     vec_for(p, *toks) {
@@ -443,7 +443,7 @@ static void pp_paste(pp_expansion exp, const tok *t) {
     exp->insert_whitespace = false;
 }
 
-static tok pp_stringise(pp_expansion exp, const tok *t, const tok* hash) {
+static tok pp_stringise(pp_expansion exp, const tok *t, const tok *hash) {
     tokens *param = pp_get_param_tokens(exp, t);
     assert(param && "'#' must be followed by parameter");
     return pp_stringise_tokens(exp->pp, param, hash->loc, hash->whitespace_before);
@@ -684,8 +684,8 @@ static void pp_fini_expansion(pp_expansion exp, bool start_of_line, bool ws_befo
 }
 
 static void pp_expand_function_like(
-    pp pp,
-    macro m,
+    pp *pp,
+    pp_macro *m,
     tokens_vec *args,
     loc l,
     bool start_of_line,
@@ -732,7 +732,7 @@ static void pp_expand_function_like(
     pp_fini_expansion(&exp, start_of_line, ws_before);
 }
 
-static void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line, bool ws_before) {
+static void pp_expand_object_like(pp *pp, pp_macro *m, loc l, bool start_of_line, bool ws_before) {
     if (m->tokens.size == 0) return;
     struct pp_expansion exp = {};
     exp.pp = pp;
@@ -750,14 +750,14 @@ static void pp_expand_object_like(pp pp, macro m, loc l, bool start_of_line, boo
     pp_fini_expansion(&exp, start_of_line, ws_before);
 }
 
-bool pp_maybe_expand_macro(pp pp) {
+bool pp_maybe_expand_macro(pp *pp) {
     if (pp->tok.disable_expansion) return false;
 
     tokens_vec args = {};
     loc l = pp->tok.loc;
     bool sol = pp->tok.start_of_line;
     bool ws_before = pp->tok.whitespace_before;
-    macro m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.text));
+    pp_macro *m = pp_get_macro_and_args(pp, &args, as_span(pp->tok.text));
 
     if (m && !m->expanding) {
         if (m->is_function_like) {

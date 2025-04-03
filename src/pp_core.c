@@ -4,23 +4,23 @@
 #include "sys/stat.h"
 #include "unistd.h"
 
-void pp_read_token_raw_impl(pp pp, bool include_look_ahead);
+void pp_read_token_raw_impl(pp *pp, bool include_look_ahead);
 
-void pp_init(pp pp) {
+void pp_init(pp *pp) {
     obstack_init(&pp->string_alloc);
 }
 
-bool pp_lexing_file(pp pp) {
-    return pp->token_streams.size && vec_back(pp->token_streams).kind == ts_lexer;
+bool pp_lexing_file(pp *pp) {
+    return pp->token_streams.size && vec_back(pp->token_streams).kind == pp_token_stream_lexer;
 }
 
-void pp_materialise_look_ahead_toks(pp pp) {
+void pp_materialise_look_ahead_toks(pp *pp) {
     vec_erase_if(t, pp->look_ahead_tokens, t->type == tt_eof);
     if (!pp->look_ahead_tokens.size) return;
     vec_push(
         pp->token_streams,
-        (struct token_stream) {
-            .kind = ts_toks,
+        (struct pp_token_stream) {
+            .kind = pp_token_stream_toks,
             .toks = (token_buffer) {
                 .toks = pp->look_ahead_tokens,
                 .cursor = 0,
@@ -30,7 +30,7 @@ void pp_materialise_look_ahead_toks(pp pp) {
     pp->look_ahead_tokens = (tokens) {};
 }
 
-void pp_add_lexer_for_file(pp pp, const char *filename) {
+void pp_add_lexer_for_file(pp *pp, const char *filename) {
     int fd = open(filename, 0);
     if (fd < 0) {
         perror(filename);
@@ -43,7 +43,7 @@ void pp_add_lexer_for_file(pp pp, const char *filename) {
         die("failed to stat file");
     }
 
-    struct memory_map contents = {};
+    struct pp_memory_map contents = {};
     if (s.st_size) {
         auto ptr = mmap(
             nullptr,
@@ -72,14 +72,14 @@ void pp_add_lexer_for_file(pp pp, const char *filename) {
     pp_materialise_look_ahead_toks(pp);
     vec_push(
         pp->token_streams,
-        (struct token_stream) {
-            .kind = ts_lexer,
+        (struct pp_token_stream) {
+            .kind = pp_token_stream_lexer,
             .lex = l,
         }
     );
 }
 
-void pp_conv(pp pp) {
+void pp_conv(pp *pp) {
     if (pp->tok.type == tt_pp_name) {
         if (false) {}
 #define kw(x) \
@@ -89,7 +89,7 @@ void pp_conv(pp pp) {
     }
 }
 
-noreturn pp_error(pp pp, const char *msg) {
+noreturn pp_error(pp *pp, const char *msg) {
     print_loc(pp->tok.loc);
     printf("error: %s\n", msg);
     exit(1);
@@ -101,11 +101,11 @@ void pp_error_at(loc l, const char *err) {
     exit(1);
 }
 
-void pp_enter_token_stream(pp pp, tokens toks, macro m) { // clang-format off
+void pp_enter_token_stream(pp *pp, tokens toks, pp_macro *m) { // clang-format off
     if (m) m->expanding = true;
     pp_materialise_look_ahead_toks(pp);
-    vec_push(pp->token_streams, (struct token_stream) {
-        .kind = ts_toks,
+    vec_push(pp->token_streams, (struct pp_token_stream) {
+        .kind = pp_token_stream_toks,
         .toks = {
             .m = m,
             .toks = toks,
@@ -115,24 +115,24 @@ void pp_enter_token_stream(pp pp, tokens toks, macro m) { // clang-format off
     });
 } // clang-format on
 
-void pp_free_macro(macro m) {
+void pp_free_macro(pp_macro *m) {
     vec_free(m->params);
     vec_free(m->tokens);
 }
 
-void pp_free(pp pp) {
+void pp_free(pp *pp) {
     vec_delete_els(def, pp->defs)
         pp_free_macro(def);
 
     vec_delete_els(m, pp->memory_maps)
-        munmap((void*) m->ptr, m->size);
+        munmap((void *) m->ptr, m->size);
 
     vec_free(pp->look_ahead_tokens);
     vec_free(pp->token_streams);
     obstack_free(&pp->string_alloc, nullptr);
 }
 
-tok *pp_look_ahead(pp pp, size_t n) {
+tok *pp_look_ahead(pp *pp, size_t n) {
     if (n == 0) return &pp->tok;
     if (n <= pp->look_ahead_tokens.size)
         return &pp->look_ahead_tokens.data[n - 1];
@@ -147,23 +147,23 @@ tok *pp_look_ahead(pp pp, size_t n) {
     tail return pp_look_ahead(pp, n);
 }
 
-bool pp_ts_done(token_stream s) {
+bool pp_ts_done(pp_token_stream *s) {
     switch (s->kind) {
-        case ts_lexer: return lex_eof(&s->lex);
-        case ts_toks: return s->toks.cursor == s->toks.toks.size;
+        case pp_token_stream_lexer: return lex_eof(&s->lex);
+        case pp_token_stream_toks: return s->toks.cursor == s->toks.toks.size;
     }
 
     die("unreachable");
 }
 
-void pp_ts_pop(pp pp) {
+void pp_ts_pop(pp *pp) {
     auto ts = vec_pop(pp->token_streams);
     switch (ts.kind) {
-        case ts_lexer:
+        case pp_token_stream_lexer:
             if (ts.lex.pp_if_depth) pp_error_at(ts.lex.loc, "missing #endif at end of file");
             lex_free(&ts.lex);
             return;
-        case ts_toks:
+        case pp_token_stream_toks:
             vec_free(ts.toks.toks);
             if (ts.toks.m) ts.toks.m->expanding = false;
             return;
@@ -172,7 +172,7 @@ void pp_ts_pop(pp pp) {
     die("unreachable");
 }
 
-void pp_preprocess(pp pp) {
+void pp_preprocess(pp *pp) {
     if (pp->tok.type == tt_hash && pp->tok.start_of_line && pp_lexing_file(pp)) {
         pp_read_token_raw(pp);
 
@@ -190,7 +190,7 @@ void pp_preprocess(pp pp) {
     // TODO: Concatenate adjacent string literal tokens here.
 }
 
-void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
+void pp_read_token_raw_impl(pp *pp, bool include_look_ahead) {
     tok_reset(&pp->tok);
 
     if (include_look_ahead && pp->look_ahead_tokens.size) {
@@ -201,7 +201,7 @@ void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
     while (pp->token_streams.size && pp_ts_done(&vec_back(pp->token_streams))) {
         // This is used for macro arg substitution.
         auto s = &vec_back(pp->token_streams);
-        if (s->kind == ts_toks && s->toks.keep_when_empty) {
+        if (s->kind == pp_token_stream_toks && s->toks.keep_when_empty) {
             pp->tok.type = tt_eof;
             return;
         }
@@ -216,25 +216,25 @@ void pp_read_token_raw_impl(pp pp, bool include_look_ahead) {
 
     auto ts = &vec_back(pp->token_streams);
     switch (ts->kind) {
-        case ts_lexer: pp->tok.type = lex(&ts->lex, &pp->tok); break;
-        case ts_toks: pp->tok = ts->toks.toks.data[ts->toks.cursor++]; break;
+        case pp_token_stream_lexer: pp->tok.type = lex(&ts->lex, &pp->tok); break;
+        case pp_token_stream_toks: pp->tok = ts->toks.toks.data[ts->toks.cursor++]; break;
     }
 
     if (pp->tok.type == tt_eof)
         tail return pp_read_token_raw_impl(pp, include_look_ahead);
 }
 
-void pp_read_token(pp pp) {
+void pp_read_token(pp *pp) {
     pp_read_and_expand_token(pp);
     pp_conv(pp);
 }
 
-void pp_read_and_expand_token(pp pp) {
+void pp_read_and_expand_token(pp *pp) {
     pp_read_token_raw(pp);
     pp_preprocess(pp);
 }
 
-void pp_read_token_raw(pp pp) {
+void pp_read_token_raw(pp *pp) {
     pp_read_token_raw_impl(pp, true);
 
     if (pp->tok.type == tt_pp_name) {
@@ -244,7 +244,7 @@ void pp_read_token_raw(pp pp) {
     }
 }
 
-bool pp_undefine(pp pp, span macro_name) {
+bool pp_undefine(pp *pp, span macro_name) {
     size_t idx = vec_find_if_index(v, pp->defs, eq(v->name, macro_name));
     if (idx == NO_INDEX) return false;
     pp_free_macro(pp->defs.data + idx);

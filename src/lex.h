@@ -141,7 +141,7 @@ typedef vec(span) span_vec;
 typedef vec(tokens) tokens_vec;
 
 typedef struct lexer {
-    struct obstack* string_alloc;
+    struct obstack *string_alloc;
     string tmp;
     u32 pp_if_depth;
     loc loc;
@@ -150,20 +150,20 @@ typedef struct lexer {
     char c;
     bool start_of_line;
     bool whitespace_before;
-} *lexer;
+} lexer;
 
 typedef struct token_buffer {
-    struct macro *m; ///< May be null.
+    struct pp_macro *m; ///< May be null.
     tokens toks;
     size_t cursor;
     bool keep_when_empty;
 } token_buffer;
 
-tt lex(lexer l, tok *t);
-void lex_free(lexer l);
-void lexer_init(lexer l, struct obstack* string_alloc, span filename, span contents);
-bool lex_eof(lexer l);
+tt lex(lexer *l, tok *t);
+void lex_free(lexer *l);
+void lexer_init(lexer *l, struct obstack *string_alloc, span filename, span contents);
+bool lex_eof(lexer *l);
 void print_loc(loc l);
-void tok_reset(tok* t);
+void tok_reset(tok *t);
 
 #endif // LEX_H

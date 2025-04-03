@@ -1,17 +1,17 @@
 #include "pp.h"
 
-static void pp_skip_line_raw(pp pp) {
+static void pp_skip_line_raw(pp *pp) {
     do pp_read_token_raw(pp);
     while (pp->tok.type != tt_eof && !pp->tok.start_of_line);
 }
 
-static lexer pp_lexer(pp pp) {
+static lexer *pp_lexer(pp *pp) {
     assert(pp_lexing_file(pp));
     return &vec_back(pp->token_streams).lex;
 }
 
 // #define
-static void pp_dir_define(pp pp) {
+static void pp_dir_define(pp *pp) {
     pp_read_token_raw(pp);
 
     if (pp->tok.type != tt_pp_name || pp->tok.start_of_line)
@@ -21,7 +21,7 @@ static void pp_dir_define(pp pp) {
 }
 
 // #endif
-static void pp_dir_endif(pp pp) {
+static void pp_dir_endif(pp *pp) {
     if (!pp_lexing_file(pp) || !pp_lexer(pp)->pp_if_depth)
         pp_error(pp, "unexpected #endif");
 
@@ -30,7 +30,7 @@ static void pp_dir_endif(pp pp) {
 }
 
 // #if(n)def
-static void pp_dir_ifdef(pp pp, bool ifdef) {
+static void pp_dir_ifdef(pp *pp, bool ifdef) {
     pp_read_token_raw(pp);
 
     if (pp->tok.type != tt_pp_name || pp->tok.start_of_line)
@@ -57,7 +57,7 @@ static void pp_dir_ifdef(pp pp, bool ifdef) {
 }
 
 // #include
-static void pp_dir_include(pp pp) {
+static void pp_dir_include(pp *pp) {
     pp_read_token_raw(pp);
 
     if (pp->tok.type != tt_string || pp->tok.start_of_line)
@@ -91,7 +91,7 @@ static void pp_dir_include(pp pp) {
 }
 
 // #undef
-static void pp_dir_undef(pp pp) {
+static void pp_dir_undef(pp *pp) {
     pp_read_token_raw(pp);
 
     if (pp->tok.type != tt_pp_name || pp->tok.start_of_line)
@@ -105,7 +105,7 @@ static void pp_dir_undef(pp pp) {
     pp_skip_line_raw(pp);
 }
 
-void pp_dir(pp pp) {
+void pp_dir(pp *pp) {
     if (eq(pp->tok.text, lit_span("define"))) pp_dir_define(pp);
     else if (eq(pp->tok.text, lit_span("undef"))) pp_dir_undef(pp);
     else if (eq(pp->tok.text, lit_span("ifdef"))) pp_dir_ifdef(pp, true);

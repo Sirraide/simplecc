@@ -227,6 +227,6 @@ typedef vec(char) string;
     s1.size >= s2.size&& memcmp(s1.data, s2.data, s2.size) == 0; \
 })
 
-span str_save(struct obstack* obstack, string* s);
+span str_save(struct obstack *obstack, string *s);
 
 #endif // VECTOR_H

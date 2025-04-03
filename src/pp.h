@@ -1,61 +1,61 @@
 #ifndef PP_H
 #define PP_H
 
-#include "vector.h"
 #include "lex.h"
+#include "vector.h"
 
-typedef struct token_stream {
-    enum token_stream_kind {
-        ts_lexer,
-        ts_toks,
+typedef struct pp_token_stream {
+    enum pp_token_stream_kind {
+        pp_token_stream_lexer,
+        pp_token_stream_toks,
     } kind;
 
     union {
-        struct lexer lex;
+        lexer lex;
         token_buffer toks;
     };
-} *token_stream;
+} pp_token_stream;
 
-typedef struct macro {
+typedef struct pp_macro {
     span name;
     tokens tokens;
     span_vec params;
     bool is_variadic;
     bool is_function_like;
     bool expanding;
-} *macro;
+} pp_macro;
 
-struct memory_map {
-    const void* ptr;
+typedef struct pp_memory_map {
+    const void *ptr;
     size_t size;
-};
+} pp_memory_map;
 
 typedef struct pp {
     tok tok;
     tokens look_ahead_tokens;
-    vec(struct token_stream) token_streams;
-    vec(struct macro) defs;
-    vec(struct memory_map) memory_maps;
+    vec(pp_token_stream) token_streams;
+    vec(pp_macro) defs;
+    vec(pp_memory_map) memory_maps;
     struct obstack string_alloc;
-} *pp;
+} pp;
 
-noreturn pp_error(pp pp, const char *msg);
+noreturn pp_error(pp *pp, const char *msg);
 noreturn pp_error_at(loc l, const char *err);
 
-void pp_add_lexer_for_file(pp pp, const char *filename);
-void pp_dir(pp pp);
-void pp_do_define(pp pp);
-void pp_enter_token_stream(pp pp, tokens toks, macro m);
-void pp_free(pp pp);
-void pp_init(pp pp);
-bool pp_lexing_file(pp pp);
-tok *pp_look_ahead(pp pp, size_t n);
-bool pp_maybe_expand_macro(pp pp);
-void pp_read_and_expand_token(pp pp);
-void pp_read_token_raw(pp pp);
-void pp_read_token(pp pp);
+void pp_add_lexer_for_file(pp *pp, const char *filename);
+void pp_dir(pp *pp);
+void pp_do_define(pp *pp);
+void pp_enter_token_stream(pp *pp, tokens toks, pp_macro *m);
+void pp_free(pp *pp);
+void pp_init(pp *pp);
+bool pp_lexing_file(pp *pp);
+tok *pp_look_ahead(pp *pp, size_t n);
+bool pp_maybe_expand_macro(pp *pp);
+void pp_read_and_expand_token(pp *pp);
+void pp_read_token_raw(pp *pp);
+void pp_read_token(pp *pp);
 void pp_stringise_token(string *s, const tok *t, bool escape);
-void pp_ts_pop(pp pp);
-bool pp_undefine(pp pp, span m);
+void pp_ts_pop(pp *pp);
+bool pp_undefine(pp *pp, span m);
 
-#endif //PP_H
+#endif // PP_H

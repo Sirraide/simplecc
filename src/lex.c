@@ -1,10 +1,10 @@
 #include "lex.h"
 
-bool lex_eof(lexer l) {
+bool lex_eof(lexer *l) {
     return l->c == 0;
 }
 
-static void lex_char_raw(lexer l) {
+static void lex_char_raw(lexer *l) {
     if (l->char_ptr >= l->end_ptr) {
         l->c = 0;
         return;
@@ -13,7 +13,7 @@ static void lex_char_raw(lexer l) {
     l->c = *l->char_ptr++;
 }
 
-static void lex_char(lexer l) {
+static void lex_char(lexer *l) {
     lex_char_raw(l);
     switch (l->c) {
         case '\n':
@@ -28,7 +28,7 @@ static void lex_char(lexer l) {
     }
 }
 
-static bool lex_eat(lexer l, char c) {
+static bool lex_eat(lexer *l, char c) {
     if (l->c != c)
         return false;
 
@@ -36,7 +36,7 @@ static bool lex_eat(lexer l, char c) {
     return true;
 }
 
-static void lex_skip_ws(lexer l) {
+static void lex_skip_ws(lexer *l) {
     l->start_of_line = false;
     l->whitespace_before = false;
     for (;;) {
@@ -59,7 +59,7 @@ static void lex_skip_ws(lexer l) {
     }
 }
 
-static void lex_skip_line(lexer l) {
+static void lex_skip_line(lexer *l) {
     // Don’t eat the \n here so we can set the start of line flag.
     while (!lex_eof(l) && l->c != '\n')
         lex_char(l);
@@ -77,7 +77,7 @@ static bool lex_is_continue(char c) {
     }
 }
 
-static noreturn lex_error(lexer l, const char *msg) {
+static noreturn lex_error(lexer *l, const char *msg) {
     print_loc(l->loc);
     printf("error: %s\n", msg);
     exit(1);
@@ -88,7 +88,7 @@ static bool is_hex_or_sep(char c) { return c == '\'' || (c >= '0' && c <= '9') |
 static bool is_bin_or_sep(char c) { return c == '\'' || c == '0' || c == '1'; }
 static bool is_decimal_or_sep(char c) { return c == '\'' || (c >= '0' && c <= '9'); }
 
-static void lex_chars(lexer l, bool(char_p)(char)) {
+static void lex_chars(lexer *l, bool(char_p)(char)) {
     while (char_p(l->c)) {
         vec_push(l->tmp, l->c);
         lex_char(l);
@@ -98,7 +98,7 @@ static void lex_chars(lexer l, bool(char_p)(char)) {
         lex_error(l, "unexpected character in integer literal");
 }
 
-static void lex_number(lexer l, tok *t, bool(digit_p)(char), u8 base) {
+static void lex_number(lexer *l, tok *t, bool(digit_p)(char), u8 base) {
     lex_chars(l, digit_p);
     t->text = str_save(l->string_alloc, &l->tmp);
     t->val = 0;
@@ -113,7 +113,7 @@ static void lex_number(lexer l, tok *t, bool(digit_p)(char), u8 base) {
     }
 }
 
-static tt lex_string(lexer l, tok *t, char delim) {
+static tt lex_string(lexer *l, tok *t, char delim) {
     vec_clear(l->tmp);
     while (!lex_eof(l) && l->c != delim) {
         switch (l->c) {
@@ -154,7 +154,7 @@ static tt lex_string(lexer l, tok *t, char delim) {
     return delim == '\'' ? tt_char : tt_string;
 }
 
-tt lex(lexer l, tok *t) {
+tt lex(lexer *l, tok *t) {
     lex_skip_ws(l);
     t->start_of_line = l->start_of_line;
     t->whitespace_before = l->whitespace_before;
@@ -265,11 +265,11 @@ void tok_reset(tok *a) {
     memset(a, 0, sizeof(tok));
 }
 
-void lex_free(lexer l) {
+void lex_free(lexer *l) {
     vec_free(l->tmp);
 }
 
-void lexer_init(lexer l, struct obstack* string_alloc, span filename, span contents) {
+void lexer_init(lexer *l, struct obstack *string_alloc, span filename, span contents) {
     l->string_alloc = string_alloc;
     l->loc.file = filename;
     l->loc.line = 1;
