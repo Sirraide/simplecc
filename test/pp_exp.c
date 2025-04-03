@@ -205,3 +205,128 @@ IDENTITY0()
 #define BAR()
 first FOO() third
 
+// + bar foo (2)
+#define foo(x) bar x
+foo(foo) (2)
+
+// + m(ABCD)
+#define m(a) a(w)
+#define w ABCD
+m(m)
+
+// + FUNC (3+1)
+#define F(a) a
+#define FUNC(a) (a+1)
+F(FUNC) FUNC (3);
+
+// + # define X 3
+#define H #
+#define D define
+#define DEFINE(a, b) H D a b
+DEFINE(X, 3)
+
+// + a:Y
+#define FOO(X) X ## Y
+a:FOO()
+
+// + b:Y
+#define FOO2(X) Y ## X
+b:FOO2()
+
+// + c:YY
+#define FOO3(X) X ## Y ## X ## Y ## X ## X
+c:FOO3()
+
+// + d:FOO4(,)
+#define FOO4(X, Y) X ## Y
+d:FOO4(,FOO4(,))
+
+// + AB AB CD
+#define CD A ## B C ## D
+#define AB A ## B C ## D
+AB
+
+// + 1: aaab 2
+#define a(n) aaa ## n
+#define b 2
+1: a(b b)
+
+// + 2: 2 baaa
+#undef a
+#undef b
+#define a(n) n ## aaa
+#define b 2
+2: a(b b)
+
+// + 3: 2 xx
+#define baaa xx
+3: a(b b)
+
+// + "x ## y";
+#undef x
+#define hash_hash # ## #
+#define mkstr(a) # a
+#define in_between(a) mkstr(a)
+#define join(c, d) in_between(c hash_hash d)
+join(x, y);
+
+// + A ## B;
+#undef A
+#undef B
+#define FOO(x) A x B
+FOO(##);
+
+// + !!
+#undef C
+#define A(B,C) B ## C
+!A(,)!
+
+// + A: barbaz123
+#define FOO bar ## baz ## 123
+A: FOO
+
+// + B: ##
+#define M1(A) A
+#define M2(X) X
+B: M1(M2(##))
+
+// + int ei_1 = (17+1);
+// + int ei_2 = (M1)(17);
+#define M1(a) (a+1)
+#define M2(b) b
+int ei_1 = M2(M1)(17);
+int ei_2 = (M2(M1))(17);
+
+// + a: 2*f(9)
+#define f(a) a*g
+#define g f
+a: f(2)(9)
+
+#undef f
+#undef g
+#undef b
+
+// + b: 2*9*g
+#define f(a) a*g
+#define g(a) f(a)
+b: f(2)(9)
+
+#define LPAREN (
+#define RPAREN )
+#define F(x, y) x + y
+#define ELLIP_FUNC(...) __VA_ARGS__
+
+// + 1: F, (, 'a', 'b', );
+// + 2: 'a' + 'b';
+1: ELLIP_FUNC(F, LPAREN, 'a', 'b', RPAREN);
+2: ELLIP_FUNC(F LPAREN 'a', 'b' RPAREN);
+
+// + 3 ;
+#define i(x) 3
+#define a i(yz
+#define b )
+a b ) ;
+
+// + static int glob = (1 + 1 );
+#define FUNC(a) a
+static int glob = (1 + FUNC(1 RPAREN );

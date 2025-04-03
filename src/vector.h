@@ -222,4 +222,10 @@ typedef vec(char) string;
     s1.size == s2.size&& memcmp(s1.data, s2.data, s1.size) == 0; \
 })
 
+#define str_starts_with(_s1, _s2) ({                             \
+    auto s1 = (_s1);                                             \
+    auto s2 = (_s2);                                             \
+    s1.size >= s2.size&& memcmp(s1.data, s2.data, s2.size) == 0; \
+})
+
 #endif // VECTOR_H

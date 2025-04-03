@@ -158,8 +158,7 @@ void pp_ts_pop(pp pp) {
 }
 
 void pp_preprocess(pp pp) {
-    if (pp->tok.type == tt_hash) {
-        if (!pp->tok.start_of_line || !pp_lexing_file(pp)) pp_error(pp, "unexpected #");
+    if (pp->tok.type == tt_hash && pp->tok.start_of_line && pp_lexing_file(pp)) {
         pp_read_token_raw(pp);
 
         // TODO: handle the GNU '#' directive.

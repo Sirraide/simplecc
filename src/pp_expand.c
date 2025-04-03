@@ -278,10 +278,10 @@ static tokens *pp_substitute(pp_expansion exp, size_t param_index) {
     if (!vec_find_if(a, *arg_toks, a->type == tt_pp_name && pp_get_expandable_macro(pp, as_span(a->name))))
         return arg_toks;
 
-    // Check if we’ve already computed the expansion of this argument.
-    if (exp->expanded_args.size != exp->m->params.size)
-        vec_resize(exp->expanded_args, exp->m->params.size);
+    // Allocate space for expansions the first time we get here.
+    vec_resize(exp->expanded_args, exp->m->params.size + exp->m->is_variadic);
 
+    // Check if we’ve already computed the expansion of this argument.
     auto expanded_arg = &exp->expanded_args.data[param_index];
     if (expanded_arg->size)
         return expanded_arg;
@@ -422,6 +422,8 @@ static void pp_paste(pp_expansion exp, const tok *t) {
     string concat = {};
     pp_stringise_token(&concat, before, false);
     pp_stringise_token(&concat, t, false);
+    if (str_starts_with(concat, lit_span("//")) || str_starts_with(concat, lit_span("/*")))
+        pp_error_at(exp->l, "token pasting cannot produce comments");
 
     struct lexer l = {};
     l.loc = before->loc;
@@ -702,10 +704,10 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
             auto toks = pp_get_param_tokens(exp, t);
 
             // The parameter expands to a placemarker.
-            if (toks->size == 0) {
-                pp_placemarker(exp);
-                continue;
-            }
+            //
+            // Do not call 'pp_placemarker()' here as we use up this placemarker to discard
+            // the '##' that we’re currently processing.
+            if (toks->size == 0) continue;
 
             // Paste with the first token of the parameter and append any other tokens as-is.
             pp_paste(exp, &vec_front(*toks));
@@ -730,7 +732,15 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
         // If the next token is '##', we must check for placemarkers here, and in any
         // case, we need to append the argument tokens as-is.
-        if (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash) {
+        //
+        // Similarly, if the *previous* token was '##', we need to insert the tokens
+        // without expansion here. This can happen if e.g. 'A' in 'A##B' was empty. Note
+        // that we can’t get here if 'B' was pasted since we would have already skipped
+        // over it in that case. We’ve already skipped the parameter so look back 2 tokens.
+        if (
+            (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash) ||
+            (exp->cursor >= 2 && exp->m->tokens.data[exp->cursor - 2].type == tt_hash_hash)
+        ) {
             auto param = pp_get_param_tokens(exp, t);
             pp_append_toks(exp, param, t);
             continue;
