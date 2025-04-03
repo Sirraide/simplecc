@@ -1,5 +1,3 @@
-// R %cc %s
-//
 // Macro Expansion Tests
 //
 // NOTE: Throughout this file, empty expansions should be on a
@@ -518,3 +516,56 @@ static int glob = (1 + FUNC(1 RPAREN );
 28: G(,1)
 #undef F
 #undef G
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef A
+#undef B
+#undef C
+
+// + 1: int x = 42;
+#define LPRN() (
+#define G(Q) 42
+#define F1(R, X, ...)  __VA_OPT__(G R X) )
+1: int x = F1(LPRN(), 0, <:-);
+#undef LPRN
+#undef G
+#undef F1
+
+// + 2: f(0 )
+#define F2(...) f(0 __VA_OPT__(,) __VA_ARGS__)
+#define EMP
+2: F2(EMP)
+#undef F2
+#undef EMP
+
+// + 3: ""
+#define H3(X, ...) #__VA_OPT__(X##X X##X)
+3: H3(, 0)
+#undef H3
+
+// + 4: a b
+#define H4(X, ...) __VA_OPT__(a X ## X) ## b
+4: H4(, 1)
+#undef H4
+
+// + 4: a b
+#define H4B(X, ...) a ## __VA_OPT__(X ## X b)
+4: H4B(, 1)
+#undef H4B
+
+// + 5: ab
+#define H5A(...) __VA_OPT__()/**/__VA_OPT__()
+#define H5B(X) a ## X ## b
+#define H5C(X) H5B(X)
+5: H5C(H5A())
+#undef H5A
+#undef H5B
+#undef H5C
+
+// + 6: ab
+#define H6(X, ...) __VA_OPT__(a ## X) ## b
+6: H6(, 1);
+#undef H6

@@ -171,6 +171,17 @@ tt lex(lexer l, tok *t) {
                 lex_skip_line(l);
                 tail return lex(l, t);
             }
+
+            if (lex_eat(l, '*')) {
+                while (!lex_eof(l)) {
+                    while (!lex_eat(l, '*')) lex_char(l);
+                    if (lex_eat(l, '/')) break;
+                }
+
+                if (lex_eof(l)) lex_error(l, "unclosed block comment");
+                tail return lex(l, t);
+            }
+
             return lex_eat(l, '=') ? tt_slash_eq : tt_slash;
         }
 
