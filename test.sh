@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 
-set -eu
+set -u
 
 ## FIXME: Actually depend on fchk properly.
 for file in test/*.c; do
    echo "Running tests in file $file..."
-   ../Source/fchk/out/fchk --prefix // "$file" -D cc=./simplecc
+   ./simplecc "$file" > /tmp/a.c
+   /bin/clang "$file" -E -P > /tmp/b.c
+   diff /tmp/a.c /tmp/b.c -w
 done

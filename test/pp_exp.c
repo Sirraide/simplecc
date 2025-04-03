@@ -318,7 +318,7 @@ AB
 3: a(b b)
 #undef baaa
 #undef a
-6undef b
+#undef b
 
 // + "x ## y";
 #define hash_hash # ## #

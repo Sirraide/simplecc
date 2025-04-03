@@ -528,24 +528,6 @@ static void pp_append_toks(pp_expansion exp, const tokens *toks, const tok *expa
     else { vec_for(p, *toks) pp_append(exp, tok_copy(p)); }
 }
 
-static void pp_do_stringise(pp_expansion exp, bool paste_before) {
-    auto hash = pp_cur(exp);
-    exp->cursor++; // Yeet '#'.
-    auto t = pp_cur(exp);
-
-    // If the next token is __VA_OPT__, it’s easier to handle this
-    // after we’re done processing it.
-    if (t->type == tt_pp_va_opt) {
-        exp->va_opt.paste_tokens = paste_before;
-        pp_defer_stringise_va_opt(exp, hash);
-        return;
-    }
-
-    exp->paste_before = exp->paste_before || paste_before;
-    exp->cursor++; // Yeet parameter.
-    pp_append(exp, pp_stringise(exp, t, hash));
-}
-
 static void pp_expand_function_like_impl(pp_expansion exp) {
     pp_va_opt_reset(exp);
 
@@ -557,41 +539,20 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
     // this is largely adapted from Clang’s lexer instead. Roughly, this is how
     // each of these features is implemented.
     //
-    // The actual hard part here is token pasting, and the implementation of this
-    // feature is spread all throughout the loop, so we explain it here:
+    // The actual annoying part here is token pasting: According to the standard,
+    // if either argument of '##' is a parameter (which includes __VA_ARGS__ and
+    // '__VA_OPT__(...)') whose corresponding argument is ‘empty’—i.e. the user
+    // provided no tokens for it, or, in the case of __VA_OPT__, either '__VA_ARGS__'
+    // expands to nothing, or we have '__VA_OPT__()' with no tokens inside the '()'—
+    // that parameter is replaced with a ‘placemarker token’.
     //
-    // According to the standard, if either argument of '##' is a parameter (which
-    // includes __VA_ARGS__ and '__VA_OPT__(...)') whose corresponding argument is
-    // ‘empty’—i.e. the user provided no tokens for it, or, in the case of __VA_OPT__,
-    // either '__VA_ARGS__' expands to nothing, or we have '__VA_OPT__()' with no
-    // tokens inside the '()'—that parameter is replaced with a ‘placemarker token’.
+    // Pasting a placemarker token with another token does nothing and discards the
+    // placemarker (note: pasting 2 placemarkers leaves us with 1 placemarker).
     //
-    // Given the sequence 'A##B':
-    //
-    //   - If neither is a placemarker, we perform token pasting.
-    //   - If 'A' is a placemarker, the result is 'B'.
-    //   - If 'B' is a placemarker, the result is 'A'.
-    //   - If both are placemarkers, the result is a placemarker.
-    //
-    // Note that an equivalent, definition without placemarker tokens is:
-    //
-    //   - If neither is empty, we perform token pasting.
-    //   - If 'A' is empty, we discard 'A##'.
-    //   - If 'B' is empty, we discard '##B'.
-    //   - If both are empty, we discard 'A##B'. (*)
-    //
-    // (*) There is one more part to this last point: consider 'A##B##C'. First, it
-    // should be noted that the order of the two is unspecified. We choose to evaluate
-    // them left to right. If 'A' and 'B' are empty, the result is '##C', but more
-    // accurately, it is '<placemarker>##C', i.e. the '##' after 'B' must be discarded
-    // as well.
-    //
-    // Thus, it suffices to correctly discard '##'s whenever the standard would output
-    // a placemarker token.
-    //
-    // Note that we currently ban '####' for reasons described in the '#define' parsing
-    // code, which means that consecutive placemarker tokens are equivalent to a single
-    // placemarker.
+    // We implement 'A##B' by discarding the '##' if 'A' produces a placemarker;
+    // otherwise, we set a flag to indicate that a paste operation should happen
+    // the next time a token is appended; the paste will be performed then (or the
+    // flag will simply be unset if the next token ends up being a placemarker).
     while (exp->cursor < exp->m->tokens.size) {
         auto t = pp_cur(exp);
 
@@ -651,58 +612,34 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
 
         // Stringising operator.
         if (t->type == tt_hash) {
-            pp_do_stringise(exp, false);
+            exp->cursor++; // Yeet '#'.
+            auto hash = t;
+            t = pp_cur(exp);
+
+            // If the next token is __VA_OPT__, it’s easier to handle this after we’re done processing
+            // it. That also applies if we need to paste with the __VA_OPT__ parameter as a whole.
+            if (t->type == tt_pp_va_opt) {
+                exp->va_opt.paste_tokens = exp->paste_before;
+                exp->paste_before = false;
+                pp_defer_stringise_va_opt(exp, hash);
+                continue;
+            }
+
+            exp->cursor++; // Yeet parameter.
+            pp_append(exp, pp_stringise(exp, t, hash));
             continue;
         }
 
-        // Token pasting operator. If 'A' is a placemarker, we will already have discarded
-        // any '##' that follows, so if we get here, 'A' is not a placemarker, and we only
-        // need to check 'B'.
+        // Token pasting operator.
+        //
+        // Set a flag to record that the next (placemarker) token we append should be
+        // pasted with the preceding token; we only get here if the lhs of the paste
+        // is non-empty, otherwise, the placemarker it produced would have already
+        // discarded this.
         if (t->type == tt_hash_hash) {
+            assert(!exp->paste_before && "'####' should have been diagnosed");
             exp->cursor++; // Yeet '##'.
-            t = pp_cur(exp);
-
-            // We disallow this in the definition.
-            assert(t->type != tt_hash_hash && "'####' should have been diagnosed");
-
-            // The next token is __VA_OPT__. Defer pasting until later.
-            //
-            // We can’t simply paste with the first token within __VA_OPT__ because the
-            // expansion rules are different: in '##__VA_OPT__(B)', the 'B' is technically
-            // not adjacent to a '##', which means its contents are fully substituted instead
-            // of just inserted as-is.
-            if (t->type == tt_pp_va_opt) {
-                exp->paste_before = true;
-                continue;
-            }
-
-            // The next token is '#'.
-            if (t->type == tt_hash) {
-                pp_do_stringise(exp, true);
-                continue;
-            }
-
-            // The next token is a regular (= non-parameter) token that is not a preprocessor
-            // operator. This is never a placemarker.
-            if (!pp_is_param(t)) {
-                exp->cursor++; // Yeet the token.
-                pp_paste(exp, t);
-                continue;
-            }
-
-            // The next token is a parameter (other than '__VA_OPT__(...)').
-            exp->cursor++; // Yeet the parameter.
-            auto toks = pp_get_param_tokens(exp, t);
-
-            // The parameter expands to a placemarker.
-            //
-            // Do not call 'pp_placemarker()' here as we use up this placemarker to discard
-            // the '##' that we’re currently processing.
-            if (toks->size == 0) continue;
-
-            // Paste with the first token of the parameter and append any other tokens as-is.
             exp->paste_before = true;
-            pp_append_toks(exp, toks, t);
             continue;
         }
 
@@ -724,6 +661,9 @@ static void pp_expand_function_like_impl(pp_expansion exp) {
         // without expansion here. This can happen if e.g. 'A' in 'A##B' was empty. Note
         // that we can’t get here if 'B' was pasted since we would have already skipped
         // over it in that case. We’ve already skipped the parameter so look back 2 tokens.
+        //
+        // Note that the 'paste_before' flag is irrelevant here since it is set for both
+        // 'A##B' and 'A##__VA_OPT__(B)', but only the former case should be handled here.
         if (
             (exp->cursor < exp->m->tokens.size && pp_cur(exp)->type == tt_hash_hash) ||
             (exp->cursor >= 2 && exp->m->tokens.data[exp->cursor - 2].type == tt_hash_hash)
