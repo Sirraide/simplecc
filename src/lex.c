@@ -154,9 +154,9 @@ static tt lex_string(lexer *l, tok *t, char delim) {
     return delim == '\'' ? tt_char : tt_string;
 }
 
-tt lex(lexer *l, tok *t) {
+static tt lex_impl(lexer *l, tok *t, bool at_start_of_line) {
     lex_skip_ws(l);
-    t->start_of_line = l->start_of_line;
+    t->start_of_line = l->start_of_line || at_start_of_line;
     t->whitespace_before = l->whitespace_before;
     t->loc = l->loc;
 
@@ -169,7 +169,7 @@ tt lex(lexer *l, tok *t) {
         case '/': {
             if (lex_eat(l, '/')) {
                 lex_skip_line(l);
-                tail return lex(l, t);
+                tail return lex_impl(l, t, false); // The \n is left in l->c, so no need to set this here.
             }
 
             if (lex_eat(l, '*')) {
@@ -179,7 +179,7 @@ tt lex(lexer *l, tok *t) {
                 }
 
                 if (lex_eof(l)) lex_error(l, "unclosed block comment");
-                tail return lex(l, t);
+                tail return lex_impl(l, t, t->start_of_line);
             }
 
             return lex_eat(l, '=') ? tt_slash_eq : tt_slash;
@@ -259,6 +259,10 @@ tt lex(lexer *l, tok *t) {
         default:
             lex_error(l, "unexpected character");
     }
+}
+
+tt lex(lexer *l, tok *t) {
+    return lex_impl(l, t, false);
 }
 
 void tok_reset(tok *a) {
