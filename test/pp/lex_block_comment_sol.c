@@ -1,5 +1,5 @@
 /**/#define X 42
-/**/#define Y 43
+/* asdf *//**//**//**//**/#define Y 43
    /**/   #   define Z 44
 /\
 *\
